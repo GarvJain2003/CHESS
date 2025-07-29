@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Chess } from 'chess.js';
 import { Chessboard } from 'react-chessboard';
 import { initializeApp } from 'firebase/app';
@@ -22,21 +22,21 @@ import {
     getDoc,
     orderBy,
     limit,
-    serverTimestamp
+    serverTimestamp,
+    arrayUnion
 } from 'firebase/firestore';
 
 // --- Firebase Configuration ---
 // Using hardcoded values to resolve local build environment issues.
 const firebaseConfig = {
-    apiKey: import.meta.env.VITE_API_KEY,
-    authDomain: import.meta.env.VITE_AUTH_DOMAIN,
-    projectId: import.meta.env.VITE_PROJECT_ID,
-    storageBucket: import.meta.env.VITE_STORAGE_BUCKET,
-    messagingSenderId: import.meta.env.VITE_MESSAGING_SENDER_ID,
-    appId: import.meta.env.VITE_APP_ID,
-    measurementId: import.meta.env.VITE_MEASUREMENT_ID
-  };
-
+  apiKey: "AIzaSyCvLWINZANXo5GSZmLCuRcWPMatkpDSgmw",
+  authDomain: "chess-25608.firebaseapp.com",
+  projectId: "chess-25608",
+  storageBucket: "chess-25608.firebasestorage.app",
+  messagingSenderId: "720518216386",
+  appId: "1:720518216386:web:f6bd16f6bf862a22b5d95b",
+  measurementId: "G-JBWZEHVTHH"
+};
 
 
 const app = initializeApp(firebaseConfig);
@@ -117,6 +117,7 @@ const GameSetup = ({ user, onGameStart, onStartVsComputer }) => {
             playerIds: [user.uid],
             fen: new Chess().fen(),
             moves: [],
+            chatMessages: [], // ** NEW ** Initialize chat
             status: 'waiting',
             winner: null,
             createdAt: serverTimestamp(),
@@ -188,7 +189,8 @@ const ProfilePage = ({ user, setView, onReviewGame }) => {
 
         getDocs(q).then(querySnapshot => {
             const games = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            const sortedGames = games.sort((a, b) => b.createdAt.toDate() - a.createdAt.toDate());
+            // Handle cases where createdAt might be null
+            const sortedGames = games.sort((a, b) => (b.createdAt?.toDate() || 0) - (a.createdAt?.toDate() || 0));
             setPastGames(sortedGames);
             setLoading(false);
         });
@@ -214,7 +216,7 @@ const ProfilePage = ({ user, setView, onReviewGame }) => {
                         <button key={game.id} onClick={() => onReviewGame(game)} className="w-full grid grid-cols-3 gap-4 items-center p-3 mb-2 bg-gray-700 rounded-md text-left hover:bg-gray-600 transition">
                             <div><p className="text-white">vs {opponent?.email || 'N/A'}</p></div>
                             <div className="text-center"><p className={`font-bold ${resultColor}`}>{result}</p></div>
-                            <div className="text-right text-gray-400 text-sm"><p>{new Date(game.createdAt?.toDate()).toLocaleDateString()}</p></div>
+                            <div className="text-right text-gray-400 text-sm"><p>{new Date(game.createdAt?.toDate() || Date.now()).toLocaleDateString()}</p></div>
                         </button>
                     );
                 })}
@@ -294,7 +296,8 @@ const GameClocks = ({ gameData, game }) => {
         setBlackTime(gameData.player2Time);
 
         const interval = setInterval(() => {
-            if (gameData.status !== 'active' || game.isGameOver()) {
+            if (gameData.status !== 'active' || !game || game.isGameOver()) {
+                clearInterval(interval);
                 return;
             }
 
@@ -323,11 +326,11 @@ const GameClocks = ({ gameData, game }) => {
         <div className="w-full flex justify-between items-center mb-4">
             <div className="bg-gray-900 p-3 rounded-md text-center">
                 <p className="text-lg font-bold">{gameData.player2?.email || 'Black'}</p>
-                <p className={`text-2xl font-mono ${game.turn() === 'b' ? 'text-green-400' : ''}`}>{formatTime(blackTime)}</p>
+                <p className={`text-2xl font-mono ${game?.turn() === 'b' ? 'text-green-400' : ''}`}>{formatTime(blackTime)}</p>
             </div>
             <div className="bg-gray-900 p-3 rounded-md text-center">
                  <p className="text-lg font-bold">{gameData.player1?.email || 'White'}</p>
-                <p className={`text-2xl font-mono ${game.turn() === 'w' ? 'text-green-400' : ''}`}>{formatTime(whiteTime)}</p>
+                <p className={`text-2xl font-mono ${game?.turn() === 'w' ? 'text-green-400' : ''}`}>{formatTime(whiteTime)}</p>
             </div>
         </div>
     );
@@ -356,6 +359,62 @@ const PromotionDialog = ({ onSelectPromotion, color }) => {
                     ))}
                 </div>
             </div>
+        </div>
+    );
+};
+
+// ** NEW ** ChatBox component
+const ChatBox = ({ user, gameId, messages }) => {
+    const [newMessage, setNewMessage] = useState('');
+    const messagesEndRef = useRef(null);
+
+    const scrollToBottom = () => {
+        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+
+    useEffect(() => {
+        scrollToBottom();
+    }, [messages]);
+
+    const handleSendMessage = async (e) => {
+        e.preventDefault();
+        if (newMessage.trim() === '' || !gameId) return;
+
+        const gameRef = doc(db, 'games', gameId);
+        await updateDoc(gameRef, {
+            chatMessages: arrayUnion({
+                text: newMessage,
+                senderEmail: user.email,
+                createdAt: new Date(),
+            })
+        });
+        setNewMessage('');
+    };
+
+    return (
+        <div className="mt-6">
+            <h3 className="text-xl font-bold mb-2">Chat</h3>
+            <div className="h-32 overflow-y-auto bg-gray-900 p-2 rounded-md mb-2">
+                {messages?.map((msg, index) => (
+                    <div key={index} className="mb-2">
+                        <span className={`font-bold ${msg.senderEmail === user.email ? 'text-indigo-400' : 'text-purple-400'}`}>
+                            {msg.senderEmail === user.email ? 'You' : msg.senderEmail.split('@')[0]}:
+                        </span>
+                        <span className="text-gray-300 ml-2">{msg.text}</span>
+                    </div>
+                ))}
+                 <div ref={messagesEndRef} />
+            </div>
+            <form onSubmit={handleSendMessage} className="flex space-x-2">
+                <input 
+                    type="text" 
+                    value={newMessage} 
+                    onChange={(e) => setNewMessage(e.target.value)} 
+                    placeholder="Type a message..."
+                    className="flex-grow bg-gray-700 text-white px-3 py-2 border border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+                <button type="submit" className="bg-indigo-600 text-white font-bold py-2 px-4 rounded-md hover:bg-indigo-700">Send</button>
+            </form>
         </div>
     );
 };
@@ -450,6 +509,7 @@ export default function App() {
             mode: 'computer',
             fen: new Chess().fen(),
             moves: [],
+            chatMessages: [],
             player1: { uid: user.uid, email: user.email },
             player2: { uid: 'AI', email: 'Computer' },
             status: 'active',
@@ -617,6 +677,8 @@ export default function App() {
                                     </div>
                                 ))}
                             </div>
+                             {/* ** NEW ** Chatbox is rendered here */}
+                            {gameData.mode === 'online' && <ChatBox user={user} gameId={gameId} messages={gameData.chatMessages || []} />}
                             <button onClick={leaveGame} className="w-full mt-6 bg-gray-600 text-white py-2 rounded-md hover:bg-gray-700 transition">
                                 Leave Game
                             </button>
