@@ -21,10 +21,12 @@ import {
     getDocs,
     getDoc,
     orderBy,
-    limit
+    limit,
+    serverTimestamp
 } from 'firebase/firestore';
 
 // --- Firebase Configuration ---
+// Using hardcoded values to resolve local build environment issues.
 // --- Firebase Configuration ---
 const firebaseConfig = {
     apiKey: import.meta.env.VITE_API_KEY,
@@ -105,6 +107,8 @@ const GameSetup = ({ user, onGameStart, onStartVsComputer }) => {
         setLoading(true);
         const gameId = user.uid + "_" + Date.now();
         const gameRef = doc(db, 'games', gameId);
+        const initialTime = 300; // 5 minutes in seconds
+
         await setDoc(gameRef, {
             mode: 'online',
             player1: { uid: user.uid, email: user.email },
@@ -114,7 +118,10 @@ const GameSetup = ({ user, onGameStart, onStartVsComputer }) => {
             moves: [],
             status: 'waiting',
             winner: null,
-            createdAt: new Date(),
+            createdAt: serverTimestamp(),
+            player1Time: initialTime,
+            player2Time: initialTime,
+            lastMoveTimestamp: serverTimestamp(),
         });
         onGameStart(gameId);
     };
@@ -127,7 +134,8 @@ const GameSetup = ({ user, onGameStart, onStartVsComputer }) => {
              await updateDoc(gameRef, {
                 player2: { uid: user.uid, email: user.email },
                 playerIds: [gameDoc.data().player1.uid, user.uid],
-                status: 'active'
+                status: 'active',
+                lastMoveTimestamp: serverTimestamp(), 
             });
             onGameStart(gameId);
         }
@@ -163,8 +171,6 @@ const GameSetup = ({ user, onGameStart, onStartVsComputer }) => {
     );
 };
 
-// ProfilePage component to display user's game history.
-// ** NEW ** It now accepts an `onReviewGame` prop.
 const ProfilePage = ({ user, setView, onReviewGame }) => {
     const [pastGames, setPastGames] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -183,9 +189,6 @@ const ProfilePage = ({ user, setView, onReviewGame }) => {
             const games = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
             const sortedGames = games.sort((a, b) => b.createdAt.toDate() - a.createdAt.toDate());
             setPastGames(sortedGames);
-            setLoading(false);
-        }).catch(err => {
-            console.error("Error fetching past games:", err);
             setLoading(false);
         });
     }, [user]);
@@ -207,7 +210,6 @@ const ProfilePage = ({ user, setView, onReviewGame }) => {
                     const resultColor = result === 'Won' ? 'text-green-400' : 'text-red-400';
 
                     return (
-                        // ** NEW ** The game entry is now a button.
                         <button key={game.id} onClick={() => onReviewGame(game)} className="w-full grid grid-cols-3 gap-4 items-center p-3 mb-2 bg-gray-700 rounded-md text-left hover:bg-gray-600 transition">
                             <div><p className="text-white">vs {opponent?.email || 'N/A'}</p></div>
                             <div className="text-center"><p className={`font-bold ${resultColor}`}>{result}</p></div>
@@ -220,16 +222,13 @@ const ProfilePage = ({ user, setView, onReviewGame }) => {
     );
 };
 
-// ** NEW ** GameReviewPage component for replaying past games.
 const GameReviewPage = ({ user, gameData, setView }) => {
     const [moveIndex, setMoveIndex] = useState(-1);
 
-    // Calculate the FEN for the current move index.
     const reviewFen = useMemo(() => {
         const reviewGame = new Chess();
-        // Apply moves from the history up to the current index.
         for (let i = 0; i <= moveIndex; i++) {
-            reviewGame.move(gameData.moves[i]);
+            reviewGame.move(gameData.moves[i].san);
         }
         return reviewGame.fen();
     }, [moveIndex, gameData.moves]);
@@ -246,7 +245,7 @@ const GameReviewPage = ({ user, gameData, setView }) => {
             <div className="w-full lg:w-2/3">
                 <Chessboard 
                     position={reviewFen} 
-                    arePiecesDraggable={false} // Can't move pieces in review mode.
+                    arePiecesDraggable={false}
                     customBoardStyle={{ borderRadius: '8px', boxShadow: '0 5px 15px rgba(0, 0, 0, 0.5)' }} 
                 />
             </div>
@@ -268,16 +267,64 @@ const GameReviewPage = ({ user, gameData, setView }) => {
 
                 <h4 className="text-xl font-bold mt-6 mb-2">Move History ({moveIndex + 1} / {gameData.moves.length})</h4>
                  <div className="h-48 overflow-y-auto bg-gray-900 p-2 rounded-md font-mono text-sm">
-                    {gameData.moves?.map((san, index) => (
-                        <div key={index} className={`p-1 rounded ${index === moveIndex ? 'bg-blue-600' : ''}`}>
-                           {index % 2 === 0 ? `${Math.floor(index / 2) + 1}. ` : ''} 
-                           {san}
+                    {gameData.moves?.map((move, index) => (
+                        <div key={index} className={`flex justify-between items-center p-1 rounded ${index === moveIndex ? 'bg-blue-600' : ''}`}>
+                           <span>{index % 2 === 0 ? `${Math.floor(index / 2) + 1}. ` : ''} {move.san}</span>
+                           <span className="text-gray-500">{move.time}s</span>
                         </div>
                     ))}
                 </div>
                 <button onClick={() => setView('profile')} className="w-full mt-6 bg-gray-600 text-white py-2 rounded-md hover:bg-gray-700 transition">
                     Back to Profile
                 </button>
+            </div>
+        </div>
+    );
+};
+
+const GameClocks = ({ gameData, game }) => {
+    const [whiteTime, setWhiteTime] = useState(gameData.player1Time);
+    const [blackTime, setBlackTime] = useState(gameData.player2Time);
+
+    useEffect(() => {
+        setWhiteTime(gameData.player1Time);
+        setBlackTime(gameData.player2Time);
+
+        const interval = setInterval(() => {
+            if (gameData.status !== 'active' || game.isGameOver()) {
+                return;
+            }
+
+            const now = Date.now() / 1000;
+            const lastMoveTime = gameData.lastMoveTimestamp?.seconds || now;
+            const timeElapsed = now - lastMoveTime;
+
+            if (game.turn() === 'w') {
+                setWhiteTime(Math.max(0, gameData.player1Time - timeElapsed));
+            } else {
+                setBlackTime(Math.max(0, gameData.player2Time - timeElapsed));
+            }
+        }, 1000);
+
+        return () => clearInterval(interval);
+
+    }, [gameData, game]);
+
+    const formatTime = (seconds) => {
+        const mins = Math.floor(seconds / 60);
+        const secs = Math.floor(seconds % 60);
+        return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+    };
+
+    return (
+        <div className="w-full flex justify-between items-center mb-4">
+            <div className="bg-gray-900 p-3 rounded-md text-center">
+                <p className="text-lg font-bold">{gameData.player2?.email || 'Black'}</p>
+                <p className={`text-2xl font-mono ${game.turn() === 'b' ? 'text-green-400' : ''}`}>{formatTime(blackTime)}</p>
+            </div>
+            <div className="bg-gray-900 p-3 rounded-md text-center">
+                 <p className="text-lg font-bold">{gameData.player1?.email || 'White'}</p>
+                <p className={`text-2xl font-mono ${game.turn() === 'w' ? 'text-green-400' : ''}`}>{formatTime(whiteTime)}</p>
             </div>
         </div>
     );
@@ -291,7 +338,6 @@ export default function App() {
     const [view, setView] = useState('lobby'); 
     const [gameId, setGameId] = useState(null);
     const [gameData, setGameData] = useState(null);
-    // ** NEW ** State to hold the data of the game being reviewed.
     const [reviewGameData, setReviewGameData] = useState(null);
     
     const fen = gameData ? gameData.fen : 'start';
@@ -327,7 +373,8 @@ export default function App() {
         const gameRef = doc(db, 'games', gameId);
         const unsubscribe = onSnapshot(gameRef, (docSnap) => {
             if (docSnap.exists()) {
-                setGameData(docSnap.data());
+                const data = docSnap.data();
+                setGameData({ ...data }); 
             } else {
                 setGameId(null);
                 setGameData(null);
@@ -350,7 +397,7 @@ export default function App() {
         setGameData(prev => ({ 
             ...prev, 
             fen: gameCopy.fen(),
-            moves: [...(prev.moves || []), bestMove.san] 
+            moves: [...(prev.moves || []), { san: bestMove.san, time: 0 }] 
         }));
     }, [game, fen]);
 
@@ -380,7 +427,6 @@ export default function App() {
         setView('game');
     }
 
-    // ** NEW ** This function sets the game data for review and changes the view.
     const handleReviewGame = (gameToReview) => {
         setReviewGameData(gameToReview);
         setView('review');
@@ -404,23 +450,38 @@ export default function App() {
 
         if (move === null) return false; 
         
-        const newFen = gameCopy.fen();
-        const newMoves = [...(gameData.moves || []), move.san]; 
-        
         if (gameData.mode === 'online') {
+            const timeSinceLastMove = (Date.now() / 1000) - (gameData.lastMoveTimestamp?.seconds || Date.now() / 1000);
+            const timeTaken = Math.round(timeSinceLastMove);
+            const timeUpdate = {};
+            if (game.turn() === 'w') {
+                timeUpdate.player1Time = gameData.player1Time - timeSinceLastMove;
+            } else {
+                timeUpdate.player2Time = gameData.player2Time - timeSinceLastMove;
+            }
+            if (timeUpdate.player1Time < 0 || timeUpdate.player2Time < 0) {
+                return false;
+            }
+
             const gameRef = doc(db, 'games', gameId);
             const isGameOver = gameCopy.isGameOver();
             const newStatus = isGameOver ? 'finished' : 'active';
             const winner = isGameOver ? (gameCopy.turn() === 'w' ? gameData.player2 : gameData.player1) : null;
             
             updateDoc(gameRef, {
-                fen: newFen,
-                moves: newMoves,
+                fen: gameCopy.fen(),
+                moves: [...(gameData.moves || []), { san: move.san, time: timeTaken }],
                 status: newStatus,
                 winner: winner,
+                lastMoveTimestamp: serverTimestamp(),
+                ...timeUpdate
             });
-        } else {
-            setGameData(prev => ({ ...prev, fen: newFen, moves: newMoves }));
+        } else { 
+            setGameData(prev => ({ 
+                ...prev, 
+                fen: gameCopy.fen(), 
+                moves: [...(prev.moves || []), { san: move.san, time: 0 }]
+            }));
         }
         
         return true;
@@ -465,7 +526,6 @@ export default function App() {
         if (!user) return <AuthForm onAuthSuccess={() => {}} />;
 
         switch (view) {
-            // ** NEW ** case for the review view.
             case 'review':
                 return <GameReviewPage user={user} gameData={reviewGameData} setView={setView} />;
             case 'profile':
@@ -487,6 +547,7 @@ export default function App() {
                             />
                         </div>
                         <div className="w-full lg:w-1/3 p-6 bg-gray-800 rounded-lg shadow-lg">
+                            {gameData.mode === 'online' && <GameClocks gameData={gameData} game={game} />}
                             <h3 className="text-2xl font-bold mb-4 border-b border-gray-600 pb-2">Game Info</h3>
                             <div className="mb-4">{renderGameStatus()}</div>
                             <div className="mb-4 space-y-2">
@@ -494,11 +555,11 @@ export default function App() {
                                <p><strong>Black:</strong> {gameData.player2?.email || '...'}</p>
                             </div>
                             <h3 className="text-xl font-bold mt-6 mb-2">Move History</h3>
-                            <div className="h-64 overflow-y-auto bg-gray-900 p-2 rounded-md font-mono text-sm">
-                                {gameData.moves?.map((san, index) => (
-                                    <div key={index} className="text-gray-300">
-                                       {index % 2 === 0 ? `${Math.floor(index / 2) + 1}. ` : ''} 
-                                       {san}
+                            <div className="h-48 overflow-y-auto bg-gray-900 p-2 rounded-md font-mono text-sm">
+                                {gameData.moves?.map((move, index) => (
+                                    <div key={index} className="flex justify-between items-center text-gray-300">
+                                       <span>{index % 2 === 0 ? `${Math.floor(index / 2) + 1}. ` : ''} {move.san}</span>
+                                       <span className="text-gray-500">{move.time}s</span>
                                     </div>
                                 ))}
                             </div>
