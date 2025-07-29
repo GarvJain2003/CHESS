@@ -18,20 +18,23 @@ import {
     query, 
     where, 
     updateDoc,
+    getDocs,
+    getDoc,
+    orderBy,
     limit
 } from 'firebase/firestore';
 
 // --- Firebase Configuration ---
-// This configuration is for the user's project.
+// --- Firebase Configuration ---
 const firebaseConfig = {
-  apiKey: "AIzaSyCvLWINZANXo5GSZmLCuRcWPMatkpDSgmw",
-  authDomain: "chess-25608.firebaseapp.com",
-  projectId: "chess-25608",
-  storageBucket: "chess-25608.firebasestorage.app",
-  messagingSenderId: "720518216386",
-  appId: "1:720518216386:web:f6bd16f6bf862a22b5d95b",
-  measurementId: "G-JBWZEHVTHH"
-};
+    apiKey: import.meta.env.VITE_API_KEY,
+    authDomain: import.meta.env.VITE_AUTH_DOMAIN,
+    projectId: import.meta.env.VITE_PROJECT_ID,
+    storageBucket: import.meta.env.VITE_STORAGE_BUCKET,
+    messagingSenderId: import.meta.env.VITE_MESSAGING_SENDER_ID,
+    appId: import.meta.env.VITE_APP_ID,
+    measurementId: import.meta.env.VITE_MEASUREMENT_ID
+  };
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -39,7 +42,6 @@ const db = getFirestore(app);
 
 // --- Helper Components ---
 
-// AuthForm handles user login and registration.
 const AuthForm = ({ onAuthSuccess }) => {
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
@@ -85,12 +87,10 @@ const AuthForm = ({ onAuthSuccess }) => {
     );
 };
 
-// GameSetup is the lobby for creating or joining games.
 const GameSetup = ({ user, onGameStart, onStartVsComputer }) => {
     const [openGames, setOpenGames] = useState([]);
     const [loading, setLoading] = useState(true);
 
-    // Listen for open games in real-time.
     useEffect(() => {
         const q = query(collection(db, 'games'), where('status', '==', 'waiting'), limit(20));
         const unsubscribe = onSnapshot(q, (querySnapshot) => {
@@ -101,7 +101,6 @@ const GameSetup = ({ user, onGameStart, onStartVsComputer }) => {
         return () => unsubscribe();
     }, []);
 
-    // Creates a new online game document in Firestore.
     const handleCreateGame = async () => {
         setLoading(true);
         const gameId = user.uid + "_" + Date.now();
@@ -110,6 +109,7 @@ const GameSetup = ({ user, onGameStart, onStartVsComputer }) => {
             mode: 'online',
             player1: { uid: user.uid, email: user.email },
             player2: null,
+            playerIds: [user.uid],
             fen: new Chess().fen(),
             moves: [],
             status: 'waiting',
@@ -119,15 +119,18 @@ const GameSetup = ({ user, onGameStart, onStartVsComputer }) => {
         onGameStart(gameId);
     };
     
-    // Joins an existing game by updating its document.
     const handleJoinGame = async (gameId) => {
         setLoading(true);
         const gameRef = doc(db, 'games', gameId);
-        await updateDoc(gameRef, {
-            player2: { uid: user.uid, email: user.email },
-            status: 'active'
-        });
-        onGameStart(gameId);
+        const gameDoc = await getDoc(gameRef);
+        if (gameDoc.exists()) {
+             await updateDoc(gameRef, {
+                player2: { uid: user.uid, email: user.email },
+                playerIds: [gameDoc.data().player1.uid, user.uid],
+                status: 'active'
+            });
+            onGameStart(gameId);
+        }
     };
 
     return (
@@ -160,64 +163,180 @@ const GameSetup = ({ user, onGameStart, onStartVsComputer }) => {
     );
 };
 
+// ProfilePage component to display user's game history.
+// ** NEW ** It now accepts an `onReviewGame` prop.
+const ProfilePage = ({ user, setView, onReviewGame }) => {
+    const [pastGames, setPastGames] = useState([]);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+        if (!user) return;
+        
+        const q = query(
+            collection(db, 'games'), 
+            where('status', '==', 'finished'), 
+            where('playerIds', 'array-contains', user.uid),
+            limit(50)
+        );
+
+        getDocs(q).then(querySnapshot => {
+            const games = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            const sortedGames = games.sort((a, b) => b.createdAt.toDate() - a.createdAt.toDate());
+            setPastGames(sortedGames);
+            setLoading(false);
+        }).catch(err => {
+            console.error("Error fetching past games:", err);
+            setLoading(false);
+        });
+    }, [user]);
+
+    return (
+        <div className="w-full max-w-4xl mx-auto p-8 bg-gray-800 rounded-lg shadow-lg">
+            <div className="flex justify-between items-center mb-6">
+                <h2 className="text-3xl font-bold text-white">Your Profile</h2>
+                <button onClick={() => setView('lobby')} className="bg-gray-600 text-white py-2 px-4 rounded-md hover:bg-gray-700">Back to Lobby</button>
+            </div>
+            <p className="text-lg text-gray-300 mb-6">Email: {user.email}</p>
+            <h3 className="text-2xl text-white mb-4">Completed Games</h3>
+            <div className="h-96 overflow-y-auto bg-gray-900 p-4 rounded-md">
+                {loading && <p className="text-gray-400">Loading game history...</p>}
+                {!loading && pastGames.length === 0 && <p className="text-gray-400">You haven't completed any games yet.</p>}
+                {pastGames.map(game => {
+                    const opponent = user.uid === game.player1.uid ? game.player2 : game.player1;
+                    const result = game.winner ? (game.winner.uid === user.uid ? 'Won' : 'Lost') : 'Draw';
+                    const resultColor = result === 'Won' ? 'text-green-400' : 'text-red-400';
+
+                    return (
+                        // ** NEW ** The game entry is now a button.
+                        <button key={game.id} onClick={() => onReviewGame(game)} className="w-full grid grid-cols-3 gap-4 items-center p-3 mb-2 bg-gray-700 rounded-md text-left hover:bg-gray-600 transition">
+                            <div><p className="text-white">vs {opponent?.email || 'N/A'}</p></div>
+                            <div className="text-center"><p className={`font-bold ${resultColor}`}>{result}</p></div>
+                            <div className="text-right text-gray-400 text-sm"><p>{new Date(game.createdAt?.toDate()).toLocaleDateString()}</p></div>
+                        </button>
+                    );
+                })}
+            </div>
+        </div>
+    );
+};
+
+// ** NEW ** GameReviewPage component for replaying past games.
+const GameReviewPage = ({ user, gameData, setView }) => {
+    const [moveIndex, setMoveIndex] = useState(-1);
+
+    // Calculate the FEN for the current move index.
+    const reviewFen = useMemo(() => {
+        const reviewGame = new Chess();
+        // Apply moves from the history up to the current index.
+        for (let i = 0; i <= moveIndex; i++) {
+            reviewGame.move(gameData.moves[i]);
+        }
+        return reviewGame.fen();
+    }, [moveIndex, gameData.moves]);
+    
+    const handleNext = () => setMoveIndex(prev => Math.min(prev + 1, gameData.moves.length - 1));
+    const handlePrev = () => setMoveIndex(prev => Math.max(prev - 1, -1));
+    const handleStart = () => setMoveIndex(-1);
+    const handleEnd = () => setMoveIndex(gameData.moves.length - 1);
+
+    const opponent = user.uid === gameData.player1.uid ? gameData.player2 : gameData.player1;
+
+    return (
+         <div className="flex flex-col lg:flex-row gap-8">
+            <div className="w-full lg:w-2/3">
+                <Chessboard 
+                    position={reviewFen} 
+                    arePiecesDraggable={false} // Can't move pieces in review mode.
+                    customBoardStyle={{ borderRadius: '8px', boxShadow: '0 5px 15px rgba(0, 0, 0, 0.5)' }} 
+                />
+            </div>
+            <div className="w-full lg:w-1/3 p-6 bg-gray-800 rounded-lg shadow-lg">
+                <h3 className="text-2xl font-bold mb-4 border-b border-gray-600 pb-2">Game Review</h3>
+                <p className="mb-4">Reviewing your game against {opponent?.email || 'N/A'}.</p>
+                <div className="space-y-2 mb-6">
+                   <p><strong>White:</strong> {gameData.player1?.email}</p>
+                   <p><strong>Black:</strong> {gameData.player2?.email}</p>
+                </div>
+                
+                <h4 className="text-xl font-bold mt-6 mb-2">Controls</h4>
+                <div className="grid grid-cols-2 gap-2 mb-4">
+                    <button onClick={handleStart} className="bg-gray-600 py-2 rounded-md hover:bg-gray-700">Start</button>
+                    <button onClick={handleEnd} className="bg-gray-600 py-2 rounded-md hover:bg-gray-700">End</button>
+                    <button onClick={handlePrev} className="bg-blue-600 py-2 rounded-md hover:bg-blue-700">Previous</button>
+                    <button onClick={handleNext} className="bg-blue-600 py-2 rounded-md hover:bg-blue-700">Next</button>
+                </div>
+
+                <h4 className="text-xl font-bold mt-6 mb-2">Move History ({moveIndex + 1} / {gameData.moves.length})</h4>
+                 <div className="h-48 overflow-y-auto bg-gray-900 p-2 rounded-md font-mono text-sm">
+                    {gameData.moves?.map((san, index) => (
+                        <div key={index} className={`p-1 rounded ${index === moveIndex ? 'bg-blue-600' : ''}`}>
+                           {index % 2 === 0 ? `${Math.floor(index / 2) + 1}. ` : ''} 
+                           {san}
+                        </div>
+                    ))}
+                </div>
+                <button onClick={() => setView('profile')} className="w-full mt-6 bg-gray-600 text-white py-2 rounded-md hover:bg-gray-700 transition">
+                    Back to Profile
+                </button>
+            </div>
+        </div>
+    );
+};
+
+
 // Main App component
 export default function App() {
     const [user, setUser] = useState(null);
     const [isAuthReady, setIsAuthReady] = useState(false);
+    const [view, setView] = useState('lobby'); 
     const [gameId, setGameId] = useState(null);
     const [gameData, setGameData] = useState(null);
+    // ** NEW ** State to hold the data of the game being reviewed.
+    const [reviewGameData, setReviewGameData] = useState(null);
     
-    // The FEN string is the single source of truth for the board's position.
     const fen = gameData ? gameData.fen : 'start';
     
-    // The game object is memoized to avoid re-creating it on every render.
     const game = useMemo(() => {
         try {
-            // Correctly handle the "start" keyword for chess.js
-            if (fen === 'start') {
-                return new Chess();
-            }
+            if (fen === 'start') return new Chess();
             return new Chess(fen);
         } catch (e) {
             return null;
         }
     }, [fen]);
     
-    // Handles user authentication state changes.
     useEffect(() => {
         const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
             setUser(currentUser);
-            // If the user logs out, reset the game state.
             if (!currentUser) {
                 setGameId(null);
                 setGameData(null);
+                setView('lobby');
             }
             setIsAuthReady(true);
         });
         return () => unsubscribe();
     }, []);
 
-    // Listens for real-time updates to the current game from Firestore.
     useEffect(() => {
-        // Don't listen if it's a local computer game.
-        if (!gameId || gameId === 'local_computer_game') return;
+        if (!gameId || gameId === 'local_computer_game') {
+            if (gameId === null) setGameData(null); 
+            return;
+        }
 
         const gameRef = doc(db, 'games', gameId);
         const unsubscribe = onSnapshot(gameRef, (docSnap) => {
             if (docSnap.exists()) {
-                // When data arrives from Firestore, update the local state.
-                // This is the single source of truth for online games.
                 setGameData(docSnap.data());
             } else {
-                // If the game document is deleted, reset the game state.
                 setGameId(null);
                 setGameData(null);
+                setView('lobby');
             }
         });
         return () => unsubscribe();
     }, [gameId]);
 
-    // Handles the AI's move logic for computer games.
     const makeAIMove = useCallback(() => {
         if (!game || game.turn() !== 'b' || game.isGameOver()) return;
 
@@ -228,7 +347,6 @@ export default function App() {
         const gameCopy = new Chess(fen);
         gameCopy.move(bestMove.san);
         
-        // In computer mode, we update the local state directly.
         setGameData(prev => ({ 
             ...prev, 
             fen: gameCopy.fen(),
@@ -236,7 +354,6 @@ export default function App() {
         }));
     }, [game, fen]);
 
-    // Triggers the AI's move after a short delay.
     useEffect(() => {
         if (gameData?.mode === 'computer' && game?.turn() === 'b' && !game?.isGameOver()) {
             setTimeout(makeAIMove, 500);
@@ -245,7 +362,10 @@ export default function App() {
 
     const handleLogout = () => signOut(auth);
     
-    const handleStartGame = (id) => setGameId(id);
+    const handleStartGame = (id) => {
+        setGameId(id);
+        setView('game');
+    };
     
     const handleStartVsComputer = () => {
         setGameData({
@@ -257,15 +377,19 @@ export default function App() {
             status: 'active',
         });
         setGameId('local_computer_game');
+        setView('game');
     }
 
-    // This is the core logic for handling a piece being dropped on the board.
+    // ** NEW ** This function sets the game data for review and changes the view.
+    const handleReviewGame = (gameToReview) => {
+        setReviewGameData(gameToReview);
+        setView('review');
+    };
+
     function onDrop(sourceSquare, targetSquare) {
-        // --- 1. Initial validation ---
         if (!game || !gameData || !user) return false;
         if (gameData.status !== 'active') return false;
 
-        // --- 2. Check if it's the player's turn ---
         const isMyTurn = 
             (gameData.mode === 'computer' && game.turn() === 'w') ||
             (gameData.mode === 'online' && (
@@ -275,40 +399,33 @@ export default function App() {
         
         if (!isMyTurn) return false;
 
-        // --- 3. Try to make the move ---
         const gameCopy = new Chess(fen);
         const move = gameCopy.move({ from: sourceSquare, to: targetSquare, promotion: 'q' });
 
         if (move === null) return false; 
         
         const newFen = gameCopy.fen();
-        // ** THE FIX IS HERE **
-        // We now store the simple move notation (e.g., "e4") instead of the complex object.
         const newMoves = [...(gameData.moves || []), move.san]; 
         
-        // --- 4. Update state based on game mode ---
         if (gameData.mode === 'online') {
             const gameRef = doc(db, 'games', gameId);
             const isGameOver = gameCopy.isGameOver();
             const newStatus = isGameOver ? 'finished' : 'active';
             const winner = isGameOver ? (gameCopy.turn() === 'w' ? gameData.player2 : gameData.player1) : null;
             
-            // This update now sends a simple, serializable object to Firestore, fixing the bug.
             updateDoc(gameRef, {
                 fen: newFen,
                 moves: newMoves,
                 status: newStatus,
                 winner: winner,
             });
-        } else { // Computer mode
-            // For computer games, we can update the local state directly.
+        } else {
             setGameData(prev => ({ ...prev, fen: newFen, moves: newMoves }));
         }
         
         return true;
     }
     
-    // Determines the board orientation based on the player.
     const playerOrientation = useMemo(() => {
         if (!user || !gameData) return 'white';
         if (gameData.player1?.uid === user.uid) return 'white';
@@ -316,7 +433,6 @@ export default function App() {
         return 'white';
     }, [user, gameData]);
 
-    // Renders the current status of the game (e.g., whose turn it is).
     const renderGameStatus = () => {
         if (!gameData) return null;
         if (gameData.status === 'finished') {
@@ -341,48 +457,61 @@ export default function App() {
     
     const leaveGame = () => {
         setGameId(null);
-        setGameData(null);
+        setView('lobby');
     };
 
-    // Main render logic to switch between Auth, Lobby, and Game screens.
     const renderContent = () => {
         if (!isAuthReady) return <div className="flex justify-center items-center h-64"><p>Authenticating...</p></div>;
         if (!user) return <AuthForm onAuthSuccess={() => {}} />;
-        if (!gameId || !gameData) return <GameSetup user={user} onGameStart={handleStartGame} onStartVsComputer={handleStartVsComputer} />;
 
-        return (
-            <div className="flex flex-col lg:flex-row gap-8">
-                <div className="w-full lg:w-2/3">
-                    <Chessboard 
-                        key={fen} // The key forces a re-render when the position changes.
-                        position={fen} 
-                        onPieceDrop={onDrop} 
-                        boardOrientation={playerOrientation} 
-                        customBoardStyle={{ borderRadius: '8px', boxShadow: '0 5px 15px rgba(0, 0, 0, 0.5)' }} 
-                    />
-                </div>
-                <div className="w-full lg:w-1/3 p-6 bg-gray-800 rounded-lg shadow-lg">
-                    <h3 className="text-2xl font-bold mb-4 border-b border-gray-600 pb-2">Game Info</h3>
-                    <div className="mb-4">{renderGameStatus()}</div>
-                    <div className="mb-4 space-y-2">
-                       <p><strong>White:</strong> {gameData.player1?.email || '...'}</p>
-                       <p><strong>Black:</strong> {gameData.player2?.email || '...'}</p>
-                    </div>
-                    <h3 className="text-xl font-bold mt-6 mb-2">Move History</h3>
-                    <div className="h-64 overflow-y-auto bg-gray-900 p-2 rounded-md font-mono text-sm">
-                        {gameData.moves?.map((san, index) => (
-                            <div key={index} className="text-gray-300">
-                               {index % 2 === 0 ? `${Math.floor(index / 2) + 1}. ` : ''} 
-                               {san}
+        switch (view) {
+            // ** NEW ** case for the review view.
+            case 'review':
+                return <GameReviewPage user={user} gameData={reviewGameData} setView={setView} />;
+            case 'profile':
+                return <ProfilePage user={user} setView={setView} onReviewGame={handleReviewGame} />;
+            case 'game':
+                 if (!gameId || !gameData) {
+                    setView('lobby'); 
+                    return <GameSetup user={user} onGameStart={handleStartGame} onStartVsComputer={handleStartVsComputer} />;
+                }
+                return (
+                    <div className="flex flex-col lg:flex-row gap-8">
+                        <div className="w-full lg:w-2/3">
+                            <Chessboard 
+                                key={fen}
+                                position={fen} 
+                                onPieceDrop={onDrop} 
+                                boardOrientation={playerOrientation} 
+                                customBoardStyle={{ borderRadius: '8px', boxShadow: '0 5px 15px rgba(0, 0, 0, 0.5)' }} 
+                            />
+                        </div>
+                        <div className="w-full lg:w-1/3 p-6 bg-gray-800 rounded-lg shadow-lg">
+                            <h3 className="text-2xl font-bold mb-4 border-b border-gray-600 pb-2">Game Info</h3>
+                            <div className="mb-4">{renderGameStatus()}</div>
+                            <div className="mb-4 space-y-2">
+                               <p><strong>White:</strong> {gameData.player1?.email || '...'}</p>
+                               <p><strong>Black:</strong> {gameData.player2?.email || '...'}</p>
                             </div>
-                        ))}
+                            <h3 className="text-xl font-bold mt-6 mb-2">Move History</h3>
+                            <div className="h-64 overflow-y-auto bg-gray-900 p-2 rounded-md font-mono text-sm">
+                                {gameData.moves?.map((san, index) => (
+                                    <div key={index} className="text-gray-300">
+                                       {index % 2 === 0 ? `${Math.floor(index / 2) + 1}. ` : ''} 
+                                       {san}
+                                    </div>
+                                ))}
+                            </div>
+                            <button onClick={leaveGame} className="w-full mt-6 bg-gray-600 text-white py-2 rounded-md hover:bg-gray-700 transition">
+                                Leave Game
+                            </button>
+                        </div>
                     </div>
-                    <button onClick={leaveGame} className="w-full mt-6 bg-gray-600 text-white py-2 rounded-md hover:bg-gray-700 transition">
-                        Leave Game
-                    </button>
-                </div>
-            </div>
-        );
+                );
+            case 'lobby':
+            default:
+                return <GameSetup user={user} onGameStart={handleStartGame} onStartVsComputer={handleStartVsComputer} />;
+        }
     };
 
     return (
@@ -392,6 +521,7 @@ export default function App() {
                 {user && (
                     <div className="flex items-center space-x-4">
                         <p className="text-gray-300 hidden sm:block">{user.email}</p>
+                        <button onClick={() => setView('profile')} className="bg-purple-600 px-4 py-2 rounded-md hover:bg-purple-700 transition">Profile</button>
                         <button onClick={handleLogout} className="bg-red-600 px-4 py-2 rounded-md hover:bg-red-700 transition">Logout</button>
                     </div>
                 )}
