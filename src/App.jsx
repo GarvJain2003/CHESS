@@ -126,6 +126,7 @@ const GameSetup = ({ user, onGameStart, onStartVsComputer }) => {
             fen: new Chess().fen(),
             moves: [],
             chatMessages: [],
+            capturedPieces: { w: [], b: [] }, 
             status: 'waiting',
             winner: null,
             winReason: null,
@@ -140,6 +141,7 @@ const GameSetup = ({ user, onGameStart, onStartVsComputer }) => {
     
     const handleJoinGame = async (gameId) => {
         setLoading(true);
+        onGameStart(gameId); 
         const gameRef = doc(db, 'games', gameId);
         const gameDoc = await getDoc(gameRef);
         if (gameDoc.exists()) {
@@ -149,7 +151,6 @@ const GameSetup = ({ user, onGameStart, onStartVsComputer }) => {
                 status: 'active',
                 lastMoveTimestamp: serverTimestamp(), 
             });
-            onGameStart(gameId);
         }
     };
 
@@ -545,6 +546,23 @@ const GameActions = ({ user, gameData, gameId }) => {
     );
 };
 
+// ** UPDATED ** Graveyard component to be placed above/below the board
+const CapturedPiecesPanel = ({ pieces, color }) => {
+    const pieceOrder = { p: 1, n: 2, b: 3, r: 4, q: 5 };
+    const getPieceImage = (piece) => `https://images.chesscomfiles.com/chess-themes/pieces/neo/150/${color}${piece}.png`;
+    
+    // Sort pieces for a consistent display (pawns first, then knights, etc.)
+    const sortedPieces = [...(pieces || [])].sort((a, b) => pieceOrder[a] - pieceOrder[b]);
+
+    return (
+        <div className="flex items-center flex-wrap gap-1 h-8 my-1 px-2">
+            {sortedPieces.map((p, i) => (
+                <img key={i} src={getPieceImage(p)} alt={p} className="h-6 w-6"/>
+            ))}
+        </div>
+    );
+};
+
 
 // Main App component
 export default function App() {
@@ -608,14 +626,25 @@ export default function App() {
         const bestMove = possibleMoves[Math.floor(Math.random() * possibleMoves.length)];
         
         const gameCopy = new Chess(fen);
-        gameCopy.move(bestMove.san);
+        const result = gameCopy.move(bestMove.san);
+
+        const currentCaptured = gameData.capturedPieces || { w: [], b: [] };
+        const newCaptured = {
+            w: [...(currentCaptured.w || [])],
+            b: [...(currentCaptured.b || [])],
+        };
+        
+        if (result.captured) {
+            newCaptured.b.push(result.captured);
+        }
         
         setGameData(prev => ({ 
             ...prev, 
             fen: gameCopy.fen(),
-            moves: [...(prev.moves || []), { san: bestMove.san, time: 0 }] 
+            moves: [...(prev.moves || []), { san: bestMove.san, time: 0 }],
+            capturedPieces: newCaptured
         }));
-    }, [game, fen]);
+    }, [game, fen, gameData]);
 
     useEffect(() => {
         if (gameData?.mode === 'computer' && game?.turn() === 'b' && !game?.isGameOver()) {
@@ -636,6 +665,7 @@ export default function App() {
             fen: new Chess().fen(),
             moves: [],
             chatMessages: [],
+            capturedPieces: { w: [], b: [] },
             player1: { uid: user.uid, email: user.email },
             player2: { uid: 'AI', email: 'Computer' },
             status: 'active',
@@ -661,10 +691,24 @@ export default function App() {
 
         if (isGameOver) {
             if (gameCopy.isCheckmate()) {
-                winner = game.turn() === 'w' ? gameData.player2 : gameData.player1;
+                winner = result.color === 'w' ? gameData.player1 : gameData.player2;
                 winReason = 'Checkmate';
             } else {
                 winReason = 'Draw';
+            }
+        }
+        
+        const currentCaptured = gameData.capturedPieces || { w: [], b: [] };
+        const newCaptured = {
+            w: [...currentCaptured.w],
+            b: [...currentCaptured.b],
+        };
+        
+        if (result.captured) {
+             if (result.color === 'w') { // White moved and captured
+                newCaptured.w.push(result.captured);
+            } else { // Black moved and captured
+                newCaptured.b.push(result.captured);
             }
         }
 
@@ -673,7 +717,7 @@ export default function App() {
             const timeTaken = Math.round(timeSinceLastMove);
             const timeUpdate = {};
             
-            if (game.turn() === 'w') {
+            if (result.color === 'w') {
                 timeUpdate.player1Time = gameData.player1Time - timeSinceLastMove;
             } else {
                 timeUpdate.player2Time = gameData.player2Time - timeSinceLastMove;
@@ -684,11 +728,12 @@ export default function App() {
             await updateDoc(gameRef, {
                 fen: gameCopy.fen(),
                 moves: [...(gameData.moves || []), { san: result.san, time: timeTaken }],
+                capturedPieces: newCaptured,
                 status: newStatus,
                 winner: winner,
                 winReason: winReason,
                 lastMoveTimestamp: serverTimestamp(),
-                drawOffer: null, // Reset draw offer on successful move
+                drawOffer: null, 
                 ...timeUpdate
             });
         } else { // Computer mode
@@ -696,13 +741,14 @@ export default function App() {
                 ...prev, 
                 fen: gameCopy.fen(), 
                 moves: [...(prev.moves || []), { san: result.san, time: 0 }],
+                capturedPieces: newCaptured,
                 status: newStatus,
                 winner: winner,
                 winReason: winReason,
             }));
         }
         return result;
-    }, [fen, gameData, game, gameId]);
+    }, [fen, gameData, gameId]);
     
     const handleTimeout = useCallback(async (timedOutPlayer) => {
         if (!gameData || gameData.status === 'finished') return;
@@ -805,12 +851,10 @@ export default function App() {
             case 'profile':
                 return <ProfilePage user={user} setView={setView} onReviewGame={handleReviewGame} />;
             case 'game':
-                // ** UPDATED ** logic to show loading screen
                  if (gameId && !gameData) {
                     return <div className="flex justify-center items-center h-64"><p className="text-2xl animate-pulse">Loading game...</p></div>;
                 }
                  if (!gameId || !gameData) {
-                    // This case should ideally not be hit if gameId is set, but as a fallback:
                     setView('lobby'); 
                     return <GameSetup user={user} onGameStart={handleStartGame} onStartVsComputer={handleStartVsComputer} />;
                 }
@@ -825,12 +869,21 @@ export default function App() {
                         <div className="relative flex flex-col lg:flex-row gap-8">
                             {promotionMove && <PromotionDialog color={playerOrientation} onSelectPromotion={handleSelectPromotion} />}
                             <div className="w-full lg:w-2/3">
+                                {/* ** NEW LAYOUT ** Captured pieces are now above/below the board */}
+                                <CapturedPiecesPanel 
+                                    pieces={playerOrientation === 'white' ? gameData.capturedPieces.b : gameData.capturedPieces.w}
+                                    color={playerOrientation === 'white' ? 'w' : 'b'}
+                                />
                                 <Chessboard 
                                     key={fen}
                                     position={fen} 
                                     onPieceDrop={onDrop} 
                                     boardOrientation={playerOrientation} 
                                     customBoardStyle={{ borderRadius: '8px', boxShadow: '0 5px 15px rgba(0, 0, 0, 0.5)' }} 
+                                />
+                                <CapturedPiecesPanel 
+                                    pieces={playerOrientation === 'white' ? gameData.capturedPieces.w : gameData.capturedPieces.b}
+                                    color={playerOrientation === 'white' ? 'b' : 'w'}
                                 />
                             </div>
                             <div className="w-full lg:w-1/3 p-6 bg-gray-800 rounded-lg shadow-lg">
