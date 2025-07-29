@@ -27,7 +27,6 @@ import {
 
 // --- Firebase Configuration ---
 // Using hardcoded values to resolve local build environment issues.
-// --- Firebase Configuration ---
 const firebaseConfig = {
     apiKey: import.meta.env.VITE_API_KEY,
     authDomain: import.meta.env.VITE_AUTH_DOMAIN,
@@ -37,6 +36,8 @@ const firebaseConfig = {
     appId: import.meta.env.VITE_APP_ID,
     measurementId: import.meta.env.VITE_MEASUREMENT_ID
   };
+
+
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -228,7 +229,9 @@ const GameReviewPage = ({ user, gameData, setView }) => {
     const reviewFen = useMemo(() => {
         const reviewGame = new Chess();
         for (let i = 0; i <= moveIndex; i++) {
-            reviewGame.move(gameData.moves[i].san);
+            if (gameData.moves[i]) {
+                reviewGame.move(gameData.moves[i].san);
+            }
         }
         return reviewGame.fen();
     }, [moveIndex, gameData.moves]);
@@ -330,6 +333,33 @@ const GameClocks = ({ gameData, game }) => {
     );
 };
 
+const PromotionDialog = ({ onSelectPromotion, color }) => {
+    const pieces = ['q', 'r', 'b', 'n'];
+    const pieceColor = color === 'white' ? 'w' : 'b';
+
+    const pieceImages = {
+        q: `https://images.chesscomfiles.com/chess-themes/pieces/neo/150/${pieceColor}q.png`,
+        r: `https://images.chesscomfiles.com/chess-themes/pieces/neo/150/${pieceColor}r.png`,
+        b: `https://images.chesscomfiles.com/chess-themes/pieces/neo/150/${pieceColor}b.png`,
+        n: `https://images.chesscomfiles.com/chess-themes/pieces/neo/150/${pieceColor}n.png`,
+    };
+
+    return (
+        <div className="fixed inset-0 bg-black bg-opacity-75 flex justify-center items-center z-50">
+            <div className="bg-gray-800 p-8 rounded-lg shadow-2xl">
+                <h3 className="text-2xl text-white font-bold text-center mb-6">Promote Pawn to:</h3>
+                <div className="flex justify-center space-x-4">
+                    {pieces.map(piece => (
+                        <button key={piece} onClick={() => onSelectPromotion(piece)} className="bg-gray-700 p-2 rounded-md hover:bg-gray-600 transition">
+                            <img src={pieceImages[piece]} alt={piece} className="w-16 h-16"/>
+                        </button>
+                    ))}
+                </div>
+            </div>
+        </div>
+    );
+};
+
 
 // Main App component
 export default function App() {
@@ -339,6 +369,7 @@ export default function App() {
     const [gameId, setGameId] = useState(null);
     const [gameData, setGameData] = useState(null);
     const [reviewGameData, setReviewGameData] = useState(null);
+    const [promotionMove, setPromotionMove] = useState(null);
     
     const fen = gameData ? gameData.fen : 'start';
     
@@ -432,9 +463,48 @@ export default function App() {
         setView('review');
     };
 
+    const makeMove = useCallback((move) => {
+        const gameCopy = new Chess(fen);
+        const result = gameCopy.move(move);
+        if (result === null) return null;
+
+        if (gameData.mode === 'online') {
+            const timeSinceLastMove = (Date.now() / 1000) - (gameData.lastMoveTimestamp?.seconds || Date.now() / 1000);
+            const timeTaken = Math.round(timeSinceLastMove);
+            const timeUpdate = {};
+             if (game.turn() === 'w') {
+                timeUpdate.player1Time = gameData.player1Time - timeSinceLastMove;
+            } else {
+                timeUpdate.player2Time = gameData.player2Time - timeSinceLastMove;
+            }
+
+            const gameRef = doc(db, 'games', gameId);
+            const isGameOver = gameCopy.isGameOver();
+            const newStatus = isGameOver ? 'finished' : 'active';
+            const winner = isGameOver ? (gameCopy.turn() === 'w' ? gameData.player2 : gameData.player1) : null;
+            
+            updateDoc(gameRef, {
+                fen: gameCopy.fen(),
+                moves: [...(gameData.moves || []), { san: result.san, time: timeTaken }],
+                status: newStatus,
+                winner: winner,
+                lastMoveTimestamp: serverTimestamp(),
+                ...timeUpdate
+            });
+        } else { // Computer mode
+            setGameData(prev => ({ 
+                ...prev, 
+                fen: gameCopy.fen(), 
+                moves: [...(prev.moves || []), { san: result.san, time: 0 }]
+            }));
+        }
+        return result;
+    }, [fen, gameData, game, gameId]);
+
+
     function onDrop(sourceSquare, targetSquare) {
         if (!game || !gameData || !user) return false;
-        if (gameData.status !== 'active') return false;
+        if (gameData.status !== 'active' || promotionMove) return false;
 
         const isMyTurn = 
             (gameData.mode === 'computer' && game.turn() === 'w') ||
@@ -446,46 +516,29 @@ export default function App() {
         if (!isMyTurn) return false;
 
         const gameCopy = new Chess(fen);
-        const move = gameCopy.move({ from: sourceSquare, to: targetSquare, promotion: 'q' });
-
-        if (move === null) return false; 
+        const moves = gameCopy.moves({ square: sourceSquare, verbose: true });
+        const move = moves.find(m => m.to === targetSquare);
         
-        if (gameData.mode === 'online') {
-            const timeSinceLastMove = (Date.now() / 1000) - (gameData.lastMoveTimestamp?.seconds || Date.now() / 1000);
-            const timeTaken = Math.round(timeSinceLastMove);
-            const timeUpdate = {};
-            if (game.turn() === 'w') {
-                timeUpdate.player1Time = gameData.player1Time - timeSinceLastMove;
-            } else {
-                timeUpdate.player2Time = gameData.player2Time - timeSinceLastMove;
-            }
-            if (timeUpdate.player1Time < 0 || timeUpdate.player2Time < 0) {
-                return false;
-            }
+        if (!move) return false;
 
-            const gameRef = doc(db, 'games', gameId);
-            const isGameOver = gameCopy.isGameOver();
-            const newStatus = isGameOver ? 'finished' : 'active';
-            const winner = isGameOver ? (gameCopy.turn() === 'w' ? gameData.player2 : gameData.player1) : null;
-            
-            updateDoc(gameRef, {
-                fen: gameCopy.fen(),
-                moves: [...(gameData.moves || []), { san: move.san, time: timeTaken }],
-                status: newStatus,
-                winner: winner,
-                lastMoveTimestamp: serverTimestamp(),
-                ...timeUpdate
-            });
-        } else { 
-            setGameData(prev => ({ 
-                ...prev, 
-                fen: gameCopy.fen(), 
-                moves: [...(prev.moves || []), { san: move.san, time: 0 }]
-            }));
+        if (move.flags.includes('p')) {
+            setPromotionMove({ from: sourceSquare, to: targetSquare });
+            return false;
         }
         
-        return true;
+        const moveResult = makeMove({ from: sourceSquare, to: targetSquare });
+        return moveResult !== null;
     }
+    
+    const handleSelectPromotion = (piece) => {
+        if (!promotionMove) return;
+        makeMove({ 
+            from: promotionMove.from, 
+            to: promotionMove.to, 
+            promotion: piece 
+        });
+        setPromotionMove(null);
+    };
     
     const playerOrientation = useMemo(() => {
         if (!user || !gameData) return 'white';
@@ -536,7 +589,8 @@ export default function App() {
                     return <GameSetup user={user} onGameStart={handleStartGame} onStartVsComputer={handleStartVsComputer} />;
                 }
                 return (
-                    <div className="flex flex-col lg:flex-row gap-8">
+                    <div className="relative flex flex-col lg:flex-row gap-8">
+                        {promotionMove && <PromotionDialog color={playerOrientation} onSelectPromotion={handleSelectPromotion} />}
                         <div className="w-full lg:w-2/3">
                             <Chessboard 
                                 key={fen}
