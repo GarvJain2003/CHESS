@@ -29,14 +29,15 @@ import {
 // --- Firebase Configuration ---
 // Using hardcoded values to resolve local build environment issues.
 const firebaseConfig = {
-  apiKey: "AIzaSyCvLWINZANXo5GSZmLCuRcWPMatkpDSgmw",
-  authDomain: "chess-25608.firebaseapp.com",
-  projectId: "chess-25608",
-  storageBucket: "chess-25608.firebasestorage.app",
-  messagingSenderId: "720518216386",
-  appId: "1:720518216386:web:f6bd16f6bf862a22b5d95b",
-  measurementId: "G-JBWZEHVTHH"
-};
+    apiKey: import.meta.env.VITE_API_KEY,
+    authDomain: import.meta.env.VITE_AUTH_DOMAIN,
+    projectId: import.meta.env.VITE_PROJECT_ID,
+    storageBucket: import.meta.env.VITE_STORAGE_BUCKET,
+    messagingSenderId: import.meta.env.VITE_MESSAGING_SENDER_ID,
+    appId: import.meta.env.VITE_APP_ID,
+    measurementId: import.meta.env.VITE_MEASUREMENT_ID
+  };
+
 
 
 const app = initializeApp(firebaseConfig);
