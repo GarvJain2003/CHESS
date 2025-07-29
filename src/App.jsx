@@ -90,9 +90,17 @@ const AuthForm = ({ onAuthSuccess }) => {
     );
 };
 
+const timeControls = [
+    { label: '1 min', value: 60 },
+    { label: '3 min', value: 180 },
+    { label: '5 min', value: 300 },
+    { label: '10 min', value: 600 },
+];
+
 const GameSetup = ({ user, onGameStart, onStartVsComputer }) => {
     const [openGames, setOpenGames] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [selectedTime, setSelectedTime] = useState(300);
 
     useEffect(() => {
         const q = query(collection(db, 'games'), where('status', '==', 'waiting'), limit(20));
@@ -108,21 +116,23 @@ const GameSetup = ({ user, onGameStart, onStartVsComputer }) => {
         setLoading(true);
         const gameId = user.uid + "_" + Date.now();
         const gameRef = doc(db, 'games', gameId);
-        const initialTime = 300; // 5 minutes in seconds
-
+        
         await setDoc(gameRef, {
             mode: 'online',
+            timeControl: selectedTime,
             player1: { uid: user.uid, email: user.email },
             player2: null,
             playerIds: [user.uid],
             fen: new Chess().fen(),
             moves: [],
-            chatMessages: [], // ** NEW ** Initialize chat
+            chatMessages: [],
             status: 'waiting',
             winner: null,
+            winReason: null,
+            drawOffer: null, 
             createdAt: serverTimestamp(),
-            player1Time: initialTime,
-            player2Time: initialTime,
+            player1Time: selectedTime,
+            player2Time: selectedTime,
             lastMoveTimestamp: serverTimestamp(),
         });
         onGameStart(gameId);
@@ -146,14 +156,27 @@ const GameSetup = ({ user, onGameStart, onStartVsComputer }) => {
     return (
         <div className="w-full max-w-2xl mx-auto p-8 bg-gray-800 rounded-lg shadow-lg">
             <h2 className="text-3xl font-bold text-white text-center mb-6">Game Lobby</h2>
-            <div className="flex justify-center items-center space-x-4 mb-6">
-                 <button onClick={handleCreateGame} className="bg-green-600 text-white font-bold py-2 px-6 rounded-md hover:bg-green-700 transition duration-300 disabled:bg-gray-500" disabled={loading}>
-                    Create Online Game
-                </button>
-                <button onClick={onStartVsComputer} className="bg-blue-600 text-white font-bold py-2 px-6 rounded-md hover:bg-blue-700 transition duration-300">
-                    Play vs Computer
+            <div className="flex flex-col sm:flex-row justify-center items-center space-y-4 sm:space-y-0 sm:space-x-4 mb-6">
+                <div className="flex bg-gray-700 rounded-md p-1">
+                    {timeControls.map(tc => (
+                         <button 
+                            key={tc.value} 
+                            onClick={() => setSelectedTime(tc.value)}
+                            className={`px-4 py-2 text-sm font-medium rounded-md transition ${selectedTime === tc.value ? 'bg-indigo-600 text-white' : 'text-gray-300 hover:bg-gray-600'}`}
+                        >
+                            {tc.label}
+                        </button>
+                    ))}
+                </div>
+                 <button onClick={handleCreateGame} className="w-full sm:w-auto bg-green-600 text-white font-bold py-2 px-6 rounded-md hover:bg-green-700 transition duration-300 disabled:bg-gray-500" disabled={loading}>
+                    Create Game
                 </button>
             </div>
+             <div className="flex justify-center items-center mb-6">
+                 <button onClick={onStartVsComputer} className="w-full sm:w-auto bg-blue-600 text-white font-bold py-2 px-6 rounded-md hover:bg-blue-700 transition duration-300">
+                    Play vs Computer
+                </button>
+             </div>
             <h3 className="text-2xl text-white mb-4">Open Online Games</h3>
             <div className="h-64 overflow-y-auto bg-gray-900 p-4 rounded-md">
                 {loading && <p className="text-gray-400">Loading...</p>}
@@ -161,6 +184,7 @@ const GameSetup = ({ user, onGameStart, onStartVsComputer }) => {
                 {openGames.map(g => (
                     <div key={g.id} className="flex justify-between items-center p-3 mb-2 bg-gray-700 rounded-md">
                         <p className="font-bold text-white">{g.player1.email}</p>
+                        <span className="text-sm font-mono bg-gray-600 px-2 py-1 rounded-md">{g.timeControl / 60} | 0</span>
                         {g.player1.uid !== user.uid && (
                              <button onClick={() => handleJoinGame(g.id)} className="bg-indigo-600 text-white py-1 px-4 rounded-md hover:bg-indigo-700 transition duration-300" disabled={loading}>
                                 Join
@@ -189,7 +213,6 @@ const ProfilePage = ({ user, setView, onReviewGame }) => {
 
         getDocs(q).then(querySnapshot => {
             const games = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            // Handle cases where createdAt might be null
             const sortedGames = games.sort((a, b) => (b.createdAt?.toDate() || 0) - (a.createdAt?.toDate() || 0));
             setPastGames(sortedGames);
             setLoading(false);
@@ -287,7 +310,7 @@ const GameReviewPage = ({ user, gameData, setView }) => {
     );
 };
 
-const GameClocks = ({ gameData, game }) => {
+const GameClocks = ({ gameData, game, onTimeout }) => {
     const [whiteTime, setWhiteTime] = useState(gameData.player1Time);
     const [blackTime, setBlackTime] = useState(gameData.player2Time);
 
@@ -304,17 +327,31 @@ const GameClocks = ({ gameData, game }) => {
             const now = Date.now() / 1000;
             const lastMoveTime = gameData.lastMoveTimestamp?.seconds || now;
             const timeElapsed = now - lastMoveTime;
+            
+            let newWhiteTime = whiteTime;
+            let newBlackTime = blackTime;
 
             if (game.turn() === 'w') {
-                setWhiteTime(Math.max(0, gameData.player1Time - timeElapsed));
+                newWhiteTime = Math.max(0, gameData.player1Time - timeElapsed);
+                setWhiteTime(newWhiteTime);
             } else {
-                setBlackTime(Math.max(0, gameData.player2Time - timeElapsed));
+                newBlackTime = Math.max(0, gameData.player2Time - timeElapsed);
+                setBlackTime(newBlackTime);
             }
+
+            if (newWhiteTime <= 0) {
+                onTimeout('white');
+                clearInterval(interval);
+            } else if (newBlackTime <= 0) {
+                onTimeout('black');
+                clearInterval(interval);
+            }
+
         }, 1000);
 
         return () => clearInterval(interval);
 
-    }, [gameData, game]);
+    }, [gameData, game, onTimeout]);
 
     const formatTime = (seconds) => {
         const mins = Math.floor(seconds / 60);
@@ -322,15 +359,21 @@ const GameClocks = ({ gameData, game }) => {
         return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
     };
 
+    const getClockColor = (time) => {
+        if (time <= 10) return 'text-red-500 animate-pulse';
+        if (time <= 30) return 'text-yellow-400';
+        return 'text-white';
+    };
+
     return (
         <div className="w-full flex justify-between items-center mb-4">
             <div className="bg-gray-900 p-3 rounded-md text-center">
                 <p className="text-lg font-bold">{gameData.player2?.email || 'Black'}</p>
-                <p className={`text-2xl font-mono ${game?.turn() === 'b' ? 'text-green-400' : ''}`}>{formatTime(blackTime)}</p>
+                <p className={`text-2xl font-mono ${game?.turn() === 'b' ? 'text-green-400' : getClockColor(blackTime)}`}>{formatTime(blackTime)}</p>
             </div>
             <div className="bg-gray-900 p-3 rounded-md text-center">
                  <p className="text-lg font-bold">{gameData.player1?.email || 'White'}</p>
-                <p className={`text-2xl font-mono ${game?.turn() === 'w' ? 'text-green-400' : ''}`}>{formatTime(whiteTime)}</p>
+                <p className={`text-2xl font-mono ${game?.turn() === 'w' ? 'text-green-400' : getClockColor(whiteTime)}`}>{formatTime(whiteTime)}</p>
             </div>
         </div>
     );
@@ -363,7 +406,6 @@ const PromotionDialog = ({ onSelectPromotion, color }) => {
     );
 };
 
-// ** NEW ** ChatBox component
 const ChatBox = ({ user, gameId, messages }) => {
     const [newMessage, setNewMessage] = useState('');
     const messagesEndRef = useRef(null);
@@ -374,7 +416,7 @@ const ChatBox = ({ user, gameId, messages }) => {
 
     useEffect(() => {
         scrollToBottom();
-    }, [messages]);
+    }, [messages.length]);
 
     const handleSendMessage = async (e) => {
         e.preventDefault();
@@ -415,6 +457,90 @@ const ChatBox = ({ user, gameId, messages }) => {
                 />
                 <button type="submit" className="bg-indigo-600 text-white font-bold py-2 px-4 rounded-md hover:bg-indigo-700">Send</button>
             </form>
+        </div>
+    );
+};
+
+const GameOverDialog = ({ gameData, user, onViewProfile, onRematch, onLeave }) => {
+    if (!gameData || gameData.status !== 'finished') return null;
+
+    const winner = gameData.winner;
+    const reason = gameData.winReason || 'Checkmate';
+    const isWinner = winner && winner.uid === user.uid;
+    const isLoser = winner && winner.uid !== user.uid;
+
+    let message;
+    if (winner) {
+        message = isWinner ? 'You Won!' : `${winner.email.split('@')[0]} Won!`;
+    } else {
+        message = "It's a Draw!";
+    }
+
+    return (
+        <div className="fixed inset-0 bg-black bg-opacity-80 flex justify-center items-center z-50">
+            <div className="bg-gray-800 p-10 rounded-lg shadow-2xl text-center">
+                <h2 className="text-4xl font-bold mb-4">{message}</h2>
+                <p className="text-lg text-gray-400 mb-8">by {reason}</p>
+                <div className="flex justify-center space-x-4">
+                    <button onClick={onViewProfile} className="bg-purple-600 px-6 py-2 rounded-md hover:bg-purple-700">Profile</button>
+                    {/* <button onClick={onRematch} className="bg-green-600 px-6 py-2 rounded-md hover:bg-green-700">Rematch</button> */}
+                    <button onClick={onLeave} className="bg-gray-600 px-6 py-2 rounded-md hover:bg-gray-700">Leave Game</button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+const GameActions = ({ user, gameData, gameId }) => {
+    if (!gameData || gameData.status !== 'active') return null;
+
+    const gameRef = doc(db, 'games', gameId);
+    const myPlayerKey = user.uid === gameData.player1.uid ? 'player1' : 'player2';
+
+    const handleResign = async () => {
+        const opponent = myPlayerKey === 'player1' ? gameData.player2 : gameData.player1;
+        await updateDoc(gameRef, {
+            status: 'finished',
+            winner: opponent,
+            winReason: 'Resignation'
+        });
+    };
+
+    const handleOfferDraw = async () => {
+        await updateDoc(gameRef, { drawOffer: myPlayerKey });
+    };
+
+    const handleAcceptDraw = async () => {
+        await updateDoc(gameRef, {
+            status: 'finished',
+            winner: null,
+            winReason: 'Draw by Agreement',
+            drawOffer: null
+        });
+    };
+
+    const handleDeclineDraw = async () => {
+        await updateDoc(gameRef, { drawOffer: null });
+    };
+
+    const opponentPlayerKey = myPlayerKey === 'player1' ? 'player2' : 'player1';
+    if (gameData.drawOffer === opponentPlayerKey) {
+        return (
+            <div className="mt-4 flex space-x-2">
+                <button onClick={handleAcceptDraw} className="w-full bg-green-600 text-white py-2 rounded-md hover:bg-green-700">Accept Draw</button>
+                <button onClick={handleDeclineDraw} className="w-full bg-red-600 text-white py-2 rounded-md hover:bg-red-700">Decline</button>
+            </div>
+        );
+    }
+
+    if (gameData.drawOffer === myPlayerKey) {
+         return <p className="mt-4 text-center text-yellow-400">Draw offer sent...</p>;
+    }
+
+    return (
+        <div className="mt-4 flex space-x-2">
+            <button onClick={handleOfferDraw} className="w-full bg-gray-500 text-white py-2 rounded-md hover:bg-gray-600">Offer Draw</button>
+            <button onClick={handleResign} className="w-full bg-red-800 text-white py-2 rounded-md hover:bg-red-900">Resign</button>
         </div>
     );
 };
@@ -523,43 +649,82 @@ export default function App() {
         setView('review');
     };
 
-    const makeMove = useCallback((move) => {
+    const makeMove = useCallback(async (move) => {
         const gameCopy = new Chess(fen);
         const result = gameCopy.move(move);
         if (result === null) return null;
+
+        const isGameOver = gameCopy.isGameOver();
+        const newStatus = isGameOver ? 'finished' : 'active';
+        let winner = null;
+        let winReason = null;
+
+        if (isGameOver) {
+            if (gameCopy.isCheckmate()) {
+                winner = game.turn() === 'w' ? gameData.player2 : gameData.player1;
+                winReason = 'Checkmate';
+            } else {
+                winReason = 'Draw';
+            }
+        }
 
         if (gameData.mode === 'online') {
             const timeSinceLastMove = (Date.now() / 1000) - (gameData.lastMoveTimestamp?.seconds || Date.now() / 1000);
             const timeTaken = Math.round(timeSinceLastMove);
             const timeUpdate = {};
-             if (game.turn() === 'w') {
+            
+            if (game.turn() === 'w') {
                 timeUpdate.player1Time = gameData.player1Time - timeSinceLastMove;
             } else {
                 timeUpdate.player2Time = gameData.player2Time - timeSinceLastMove;
             }
 
             const gameRef = doc(db, 'games', gameId);
-            const isGameOver = gameCopy.isGameOver();
-            const newStatus = isGameOver ? 'finished' : 'active';
-            const winner = isGameOver ? (gameCopy.turn() === 'w' ? gameData.player2 : gameData.player1) : null;
             
-            updateDoc(gameRef, {
+            await updateDoc(gameRef, {
                 fen: gameCopy.fen(),
                 moves: [...(gameData.moves || []), { san: result.san, time: timeTaken }],
                 status: newStatus,
                 winner: winner,
+                winReason: winReason,
                 lastMoveTimestamp: serverTimestamp(),
+                drawOffer: null, // Reset draw offer on successful move
                 ...timeUpdate
             });
         } else { // Computer mode
             setGameData(prev => ({ 
                 ...prev, 
                 fen: gameCopy.fen(), 
-                moves: [...(prev.moves || []), { san: result.san, time: 0 }]
+                moves: [...(prev.moves || []), { san: result.san, time: 0 }],
+                status: newStatus,
+                winner: winner,
+                winReason: winReason,
             }));
         }
         return result;
     }, [fen, gameData, game, gameId]);
+    
+    const handleTimeout = useCallback(async (timedOutPlayer) => {
+        if (!gameData || gameData.status === 'finished') return;
+        
+        const winner = timedOutPlayer === 'white' ? gameData.player2 : gameData.player1;
+
+        if (gameData.mode === 'online') {
+            const gameRef = doc(db, 'games', gameId);
+            await updateDoc(gameRef, {
+                status: 'finished',
+                winner: winner,
+                winReason: 'Timeout'
+            });
+        } else {
+             setGameData(prev => ({ 
+                ...prev, 
+                status: 'finished',
+                winner: winner,
+                winReason: 'Timeout'
+            }));
+        }
+    }, [gameData, gameId]);
 
 
     function onDrop(sourceSquare, targetSquare) {
@@ -608,11 +773,7 @@ export default function App() {
     }, [user, gameData]);
 
     const renderGameStatus = () => {
-        if (!gameData) return null;
-        if (gameData.status === 'finished') {
-            const winnerName = gameData.winner ? gameData.winner.email : "Nobody";
-            return <p className="text-2xl text-blue-400 font-bold">Game Over! Winner: {winnerName}</p>;
-        }
+        if (!gameData || gameData.status === 'finished') return null;
         if (gameData.status === 'waiting') {
             return <p className="text-yellow-400 animate-pulse">Waiting for an opponent...</p>;
         }
@@ -644,44 +805,57 @@ export default function App() {
             case 'profile':
                 return <ProfilePage user={user} setView={setView} onReviewGame={handleReviewGame} />;
             case 'game':
+                // ** UPDATED ** logic to show loading screen
+                 if (gameId && !gameData) {
+                    return <div className="flex justify-center items-center h-64"><p className="text-2xl animate-pulse">Loading game...</p></div>;
+                }
                  if (!gameId || !gameData) {
+                    // This case should ideally not be hit if gameId is set, but as a fallback:
                     setView('lobby'); 
                     return <GameSetup user={user} onGameStart={handleStartGame} onStartVsComputer={handleStartVsComputer} />;
                 }
                 return (
-                    <div className="relative flex flex-col lg:flex-row gap-8">
-                        {promotionMove && <PromotionDialog color={playerOrientation} onSelectPromotion={handleSelectPromotion} />}
-                        <div className="w-full lg:w-2/3">
-                            <Chessboard 
-                                key={fen}
-                                position={fen} 
-                                onPieceDrop={onDrop} 
-                                boardOrientation={playerOrientation} 
-                                customBoardStyle={{ borderRadius: '8px', boxShadow: '0 5px 15px rgba(0, 0, 0, 0.5)' }} 
-                            />
-                        </div>
-                        <div className="w-full lg:w-1/3 p-6 bg-gray-800 rounded-lg shadow-lg">
-                            {gameData.mode === 'online' && <GameClocks gameData={gameData} game={game} />}
-                            <h3 className="text-2xl font-bold mb-4 border-b border-gray-600 pb-2">Game Info</h3>
-                            <div className="mb-4">{renderGameStatus()}</div>
-                            <div className="mb-4 space-y-2">
-                               <p><strong>White:</strong> {gameData.player1?.email || '...'}</p>
-                               <p><strong>Black:</strong> {gameData.player2?.email || '...'}</p>
+                     <div className="relative">
+                        <GameOverDialog 
+                            gameData={gameData} 
+                            user={user} 
+                            onViewProfile={() => setView('profile')}
+                            onLeave={leaveGame}
+                        />
+                        <div className="relative flex flex-col lg:flex-row gap-8">
+                            {promotionMove && <PromotionDialog color={playerOrientation} onSelectPromotion={handleSelectPromotion} />}
+                            <div className="w-full lg:w-2/3">
+                                <Chessboard 
+                                    key={fen}
+                                    position={fen} 
+                                    onPieceDrop={onDrop} 
+                                    boardOrientation={playerOrientation} 
+                                    customBoardStyle={{ borderRadius: '8px', boxShadow: '0 5px 15px rgba(0, 0, 0, 0.5)' }} 
+                                />
                             </div>
-                            <h3 className="text-xl font-bold mt-6 mb-2">Move History</h3>
-                            <div className="h-48 overflow-y-auto bg-gray-900 p-2 rounded-md font-mono text-sm">
-                                {gameData.moves?.map((move, index) => (
-                                    <div key={index} className="flex justify-between items-center text-gray-300">
-                                       <span>{index % 2 === 0 ? `${Math.floor(index / 2) + 1}. ` : ''} {move.san}</span>
-                                       <span className="text-gray-500">{move.time}s</span>
-                                    </div>
-                                ))}
+                            <div className="w-full lg:w-1/3 p-6 bg-gray-800 rounded-lg shadow-lg">
+                                {gameData.mode === 'online' && <GameClocks gameData={gameData} game={game} onTimeout={handleTimeout} />}
+                                <h3 className="text-2xl font-bold mb-4 border-b border-gray-600 pb-2">Game Info</h3>
+                                <div className="mb-4">{renderGameStatus()}</div>
+                                <div className="mb-4 space-y-2">
+                                   <p><strong>White:</strong> {gameData.player1?.email || '...'}</p>
+                                   <p><strong>Black:</strong> {gameData.player2?.email || '...'}</p>
+                                </div>
+                                <h3 className="text-xl font-bold mt-6 mb-2">Move History</h3>
+                                <div className="h-48 overflow-y-auto bg-gray-900 p-2 rounded-md font-mono text-sm">
+                                    {gameData.moves?.map((move, index) => (
+                                        <div key={index} className="flex justify-between items-center text-gray-300">
+                                           <span>{index % 2 === 0 ? `${Math.floor(index / 2) + 1}. ` : ''} {move.san}</span>
+                                           <span className="text-gray-500">{move.time}s</span>
+                                        </div>
+                                    ))}
+                                </div>
+                                {gameData.mode === 'online' && <ChatBox user={user} gameId={gameId} messages={gameData.chatMessages || []} />}
+                                {gameData.mode === 'online' && <GameActions user={user} gameData={gameData} gameId={gameId}/>}
+                                <button onClick={leaveGame} className="w-full mt-6 bg-gray-600 text-white py-2 rounded-md hover:bg-gray-700 transition">
+                                    Leave Game
+                                </button>
                             </div>
-                             {/* ** NEW ** Chatbox is rendered here */}
-                            {gameData.mode === 'online' && <ChatBox user={user} gameId={gameId} messages={gameData.chatMessages || []} />}
-                            <button onClick={leaveGame} className="w-full mt-6 bg-gray-600 text-white py-2 rounded-md hover:bg-gray-700 transition">
-                                Leave Game
-                            </button>
                         </div>
                     </div>
                 );
