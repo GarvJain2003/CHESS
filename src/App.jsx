@@ -38,6 +38,7 @@ const firebaseConfig = {
     measurementId: import.meta.env.VITE_MEASUREMENT_ID
   };
 
+
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
@@ -129,7 +130,7 @@ const timeControls = [
     { label: '10 min', value: 600 },
 ];
 
-const GameSetup = ({ user, onGameStart, onStartVsComputer }) => {
+const GameSetup = ({ user, onGameStart, onStartVsComputer, onStartOfflineGame }) => {
     const [openGames, setOpenGames] = useState([]);
     const [loading, setLoading] = useState(true);
     const [selectedTime, setSelectedTime] = useState(300);
@@ -205,9 +206,12 @@ const GameSetup = ({ user, onGameStart, onStartVsComputer }) => {
                     Create Game
                 </button>
             </div>
-             <div className="flex justify-center items-center mb-6">
+             <div className="flex justify-center items-center space-x-4 mb-6">
                  <button onClick={onStartVsComputer} className="w-full sm:w-auto bg-blue-600 text-white font-bold py-2 px-6 rounded-md hover:bg-blue-700 transition duration-300">
                     Play vs Computer
+                </button>
+                 <button onClick={onStartOfflineGame} className="w-full sm:w-auto bg-teal-600 text-white font-bold py-2 px-6 rounded-md hover:bg-teal-700 transition duration-300">
+                    Pass & Play
                 </button>
              </div>
             <h3 className="text-2xl text-white mb-4">Open Online Games</h3>
@@ -703,7 +707,7 @@ export default function App() {
     }, []);
 
     useEffect(() => {
-        if (!gameId || gameId === 'local_computer_game') {
+        if (!gameId || gameId.startsWith('local_')) {
             if (gameId === null) setGameData(null); 
             return;
         }
@@ -778,6 +782,20 @@ export default function App() {
         setView('game');
     }
 
+    const handleStartOfflineGame = () => {
+        setGameData({
+            mode: 'offline',
+            fen: new Chess().fen(),
+            moves: [],
+            capturedPieces: { w: [], b: [] },
+            player1: { email: 'White' },
+            player2: { email: 'Black' },
+            status: 'active',
+        });
+        setGameId('local_offline_game');
+        setView('game');
+    }
+
     const handleReviewGame = (gameToReview) => {
         setReviewGameData(gameToReview);
         setView('review');
@@ -847,7 +865,7 @@ export default function App() {
                 drawOffer: null, 
                 ...timeUpdate
             });
-        } else { // Computer mode
+        } else { // Computer or Offline mode
             setGameData(prev => ({ 
                 ...prev, 
                 fen: gameCopy.fen(), 
@@ -909,14 +927,15 @@ export default function App() {
 
 
     function onDrop(sourceSquare, targetSquare) {
-        if (!game || !gameData || !user) return false;
+        if (!game || !gameData) return false;
         if (gameData.status !== 'active' || promotionMove) return false;
 
         const isMyTurn = 
             (gameData.mode === 'computer' && game.turn() === 'w') ||
+            (gameData.mode === 'offline' && game.turn() === (gameData.moves.length % 2 === 0 ? 'w' : 'b')) ||
             (gameData.mode === 'online' && (
-                (user.uid === gameData.player1?.uid && game.turn() === 'w') ||
-                (user.uid === gameData.player2?.uid && game.turn() === 'b')
+                (user?.uid === gameData.player1?.uid && game.turn() === 'w') ||
+                (user?.uid === gameData.player2?.uid && game.turn() === 'b')
             ));
         
         const gameCopy = new Chess(fen);
@@ -924,7 +943,7 @@ export default function App() {
         const move = moves.find(m => m.to === targetSquare);
 
         if (!move) {
-            if (!isMyTurn && settings.premovesEnabled) {
+            if (!isMyTurn && settings.premovesEnabled && gameData.mode === 'online') {
                 setPremove({ from: sourceSquare, to: targetSquare });
             }
             return false;
@@ -938,7 +957,7 @@ export default function App() {
             const moveResult = makeMove({ from: sourceSquare, to: targetSquare });
             if (moveResult) setOptionSquares({});
             return moveResult !== null;
-        } else if (settings.premovesEnabled) {
+        } else if (settings.premovesEnabled && gameData.mode === 'online') {
             setPremove({ from: sourceSquare, to: targetSquare });
             return false;
         }
@@ -968,6 +987,7 @@ export default function App() {
 
         const isMyTurn = 
             (gameData.mode === 'computer' && game.turn() === 'w') ||
+            (gameData.mode === 'offline') ||
             (gameData.mode === 'online' && (
                 (user.uid === gameData.player1?.uid && game.turn() === 'w') ||
                 (user.uid === gameData.player2?.uid && game.turn() === 'b')
@@ -997,6 +1017,7 @@ export default function App() {
     
     const playerOrientation = useMemo(() => {
         if (!user || !gameData) return 'white';
+        if (gameData.mode === 'offline') return 'white';
         if (gameData.player1?.uid === user.uid) return 'white';
         if (gameData.player2?.uid === user.uid) return 'black';
         return 'white';
@@ -1012,6 +1033,7 @@ export default function App() {
         const turnColor = game.turn() === 'w' ? 'White' : 'Black';
         const isMyTurn = 
             (gameData.mode === 'computer' && game.turn() === 'w') ||
+            (gameData.mode === 'offline') ||
             (gameData.mode === 'online' && (
                 (user.uid === gameData.player1?.uid && game.turn() === 'w') ||
                 (user.uid === gameData.player2?.uid && game.turn() === 'b')
@@ -1040,7 +1062,7 @@ export default function App() {
                 }
                  if (!gameId || !gameData) {
                     setView('lobby'); 
-                    return <GameSetup user={user} onGameStart={handleStartGame} onStartVsComputer={handleStartVsComputer} />;
+                    return <GameSetup user={user} onGameStart={handleStartGame} onStartVsComputer={handleStartVsComputer} onStartOfflineGame={handleStartOfflineGame} />;
                 }
                 
                 const premoveSquareStyles = premove ? {
@@ -1106,7 +1128,7 @@ export default function App() {
                 );
             case 'lobby':
             default:
-                return <GameSetup user={user} onGameStart={handleStartGame} onStartVsComputer={handleStartVsComputer} />;
+                return <GameSetup user={user} onGameStart={handleStartGame} onStartVsComputer={handleStartVsComputer} onStartOfflineGame={handleStartOfflineGame} />;
         }
     };
 
