@@ -25,9 +25,9 @@ import {
     serverTimestamp,
     arrayUnion
 } from 'firebase/firestore';
+import * as Tone from 'tone';
 
 // --- Firebase Configuration ---
-// Using hardcoded values to resolve local build environment issues.
 const firebaseConfig = {
     apiKey: import.meta.env.VITE_API_KEY,
     authDomain: import.meta.env.VITE_AUTH_DOMAIN,
@@ -43,6 +43,39 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
+
+// --- Sound Effects Manager ---
+const soundThemes = {
+    default: {
+        synth: new Tone.PolySynth(Tone.Synth).toDestination(),
+        notes: { move: "C4", capture: "A3", check: "G5", gameOver: ["C5", "G4"] }
+    },
+    wooden: {
+        synth: new Tone.PolySynth(Tone.MembraneSynth, { envelope: { attack: 0.01, decay: 0.4, sustain: 0.01, release: 0.4 } }).toDestination(),
+        notes: { move: "E2", capture: "C2", check: "G4", gameOver: ["C4", "G3"] }
+    },
+    arcade: {
+        synth: new Tone.PolySynth(Tone.FMSynth, { harmonicity: 8, modulationIndex: 2, detune: 0, envelope: { attack: 0.01, decay: 0.2, sustain: 0, release: 0.2 } }).toDestination(),
+        notes: { move: "C5", capture: "G4", check: "B5", gameOver: ["C6", "G5"] }
+    }
+};
+
+const playSound = (type, settings) => {
+    if (!settings.soundEnabled) return;
+    Tone.start();
+    const sound = soundThemes[settings.soundTheme];
+    if (!sound) return;
+
+    try {
+        if (type === 'move') sound.synth.triggerAttackRelease(sound.notes.move, "8n");
+        else if (type === 'capture') sound.synth.triggerAttackRelease(sound.notes.capture, "8n");
+        else if (type === 'check') sound.synth.triggerAttackRelease(sound.notes.check, "16n");
+        else if (type === 'game-over') sound.synth.triggerAttackRelease(sound.notes.gameOver, "4n");
+    } catch (error) {
+        console.error("Tone.js error:", error);
+    }
+};
+
 
 // --- Helper Components ---
 
@@ -547,12 +580,10 @@ const GameActions = ({ user, gameData, gameId }) => {
     );
 };
 
-// ** UPDATED ** Graveyard component to be placed above/below the board
 const CapturedPiecesPanel = ({ pieces, color }) => {
     const pieceOrder = { p: 1, n: 2, b: 3, r: 4, q: 5 };
     const getPieceImage = (piece) => `https://images.chesscomfiles.com/chess-themes/pieces/neo/150/${color}${piece}.png`;
     
-    // Sort pieces for a consistent display (pawns first, then knights, etc.)
     const sortedPieces = [...(pieces || [])].sort((a, b) => pieceOrder[a] - pieceOrder[b]);
 
     return (
@@ -560,6 +591,53 @@ const CapturedPiecesPanel = ({ pieces, color }) => {
             {sortedPieces.map((p, i) => (
                 <img key={i} src={getPieceImage(p)} alt={p} className="h-6 w-6"/>
             ))}
+        </div>
+    );
+};
+
+const SettingsDialog = ({ settings, setSettings, onClose }) => {
+    const handleSoundToggle = (e) => {
+        setSettings(s => ({ ...s, soundEnabled: e.target.checked }));
+    };
+
+    const handleThemeChange = (e) => {
+        setSettings(s => ({ ...s, soundTheme: e.target.value }));
+    };
+
+    const handlePremoveToggle = (e) => {
+        setSettings(s => ({ ...s, premovesEnabled: e.target.checked }));
+    };
+
+    return (
+        <div className="fixed inset-0 bg-black bg-opacity-75 flex justify-center items-center z-50">
+            <div className="bg-gray-800 p-8 rounded-lg shadow-2xl w-full max-w-md">
+                <div className="flex justify-between items-center mb-6">
+                    <h2 className="text-2xl text-white font-bold">Settings</h2>
+                    <button onClick={onClose} className="text-gray-400 hover:text-white">&times;</button>
+                </div>
+                <div className="space-y-6">
+                    {/* Sound Settings */}
+                    <div className="flex items-center justify-between">
+                        <label htmlFor="sound-toggle" className="text-lg text-gray-300">Enable Sounds</label>
+                        <input type="checkbox" id="sound-toggle" checked={settings.soundEnabled} onChange={handleSoundToggle} className="w-5 h-5"/>
+                    </div>
+                    {settings.soundEnabled && (
+                        <div className="flex items-center justify-between">
+                            <label htmlFor="sound-theme" className="text-lg text-gray-300">Sound Theme</label>
+                            <select id="sound-theme" value={settings.soundTheme} onChange={handleThemeChange} className="bg-gray-700 text-white p-2 rounded-md">
+                                <option value="default">Classic</option>
+                                <option value="wooden">Wooden</option>
+                                <option value="arcade">Arcade</option>
+                            </select>
+                        </div>
+                    )}
+                     {/* Premove Settings */}
+                    <div className="flex items-center justify-between">
+                        <label htmlFor="premove-toggle" className="text-lg text-gray-300">Enable Premoves</label>
+                        <input type="checkbox" id="premove-toggle" checked={settings.premovesEnabled} onChange={handlePremoveToggle} className="w-5 h-5"/>
+                    </div>
+                </div>
+            </div>
         </div>
     );
 };
@@ -574,6 +652,21 @@ export default function App() {
     const [gameData, setGameData] = useState(null);
     const [reviewGameData, setReviewGameData] = useState(null);
     const [promotionMove, setPromotionMove] = useState(null);
+    const [showSettings, setShowSettings] = useState(false);
+    const [settings, setSettings] = useState(() => {
+        const savedSettings = localStorage.getItem('chess-settings');
+        return savedSettings ? JSON.parse(savedSettings) : {
+            soundEnabled: true,
+            soundTheme: 'default',
+            premovesEnabled: false,
+        };
+    });
+    const [premove, setPremove] = useState(null);
+
+
+    useEffect(() => {
+        localStorage.setItem('chess-settings', JSON.stringify(settings));
+    }, [settings]);
     
     const fen = gameData ? gameData.fen : 'start';
     
@@ -684,6 +777,13 @@ export default function App() {
         const gameCopy = new Chess(fen);
         const result = gameCopy.move(move);
         if (result === null) return null;
+        
+        if (settings.soundEnabled) {
+            if (gameCopy.isGameOver()) playSound('game-over', settings);
+            else if (gameCopy.inCheck()) playSound('check', settings);
+            else if (result.captured) playSound('capture', settings);
+            else playSound('move', settings);
+        }
 
         const isGameOver = gameCopy.isGameOver();
         const newStatus = isGameOver ? 'finished' : 'active';
@@ -706,9 +806,9 @@ export default function App() {
         };
         
         if (result.captured) {
-             if (result.color === 'w') { // White moved and captured
+             if (result.color === 'w') { 
                 newCaptured.w.push(result.captured);
-            } else { // Black moved and captured
+            } else { 
                 newCaptured.b.push(result.captured);
             }
         }
@@ -749,11 +849,12 @@ export default function App() {
             }));
         }
         return result;
-    }, [fen, gameData, gameId]);
+    }, [fen, gameData, gameId, settings]);
     
     const handleTimeout = useCallback(async (timedOutPlayer) => {
         if (!gameData || gameData.status === 'finished') return;
         
+        if (settings.soundEnabled) playSound('game-over', settings);
         const winner = timedOutPlayer === 'white' ? gameData.player2 : gameData.player1;
 
         if (gameData.mode === 'online') {
@@ -771,7 +872,25 @@ export default function App() {
                 winReason: 'Timeout'
             }));
         }
-    }, [gameData, gameId]);
+    }, [gameData, gameId, settings]);
+
+    useEffect(() => {
+        const isMyTurn = 
+            (gameData?.mode === 'computer' && game?.turn() === 'w') ||
+            (gameData?.mode === 'online' && (
+                (user?.uid === gameData?.player1?.uid && game?.turn() === 'w') ||
+                (user?.uid === gameData?.player2?.uid && game?.turn() === 'b')
+            ));
+        
+        if (premove && isMyTurn) {
+            const gameCopy = new Chess(fen);
+            const move = gameCopy.move({ from: premove.from, to: premove.to, promotion: premove.promotion });
+            if (move) {
+                makeMove(premove);
+            }
+            setPremove(null);
+        }
+    }, [fen, premove, game, gameData, user, makeMove]);
 
 
     function onDrop(sourceSquare, targetSquare) {
@@ -785,21 +904,30 @@ export default function App() {
                 (user.uid === gameData.player2?.uid && game.turn() === 'b')
             ));
         
-        if (!isMyTurn) return false;
-
         const gameCopy = new Chess(fen);
         const moves = gameCopy.moves({ square: sourceSquare, verbose: true });
         const move = moves.find(m => m.to === targetSquare);
-        
-        if (!move) return false;
 
-        if (move.flags.includes('p')) {
-            setPromotionMove({ from: sourceSquare, to: targetSquare });
+        if (!move) {
+            if (!isMyTurn && settings.premovesEnabled) {
+                setPremove({ from: sourceSquare, to: targetSquare });
+            }
+            return false;
+        }
+
+        if (isMyTurn) {
+             if (move.flags.includes('p')) {
+                setPromotionMove({ from: sourceSquare, to: targetSquare });
+                return false;
+            }
+            const moveResult = makeMove({ from: sourceSquare, to: targetSquare });
+            return moveResult !== null;
+        } else if (settings.premovesEnabled) {
+            setPremove({ from: sourceSquare, to: targetSquare });
             return false;
         }
         
-        const moveResult = makeMove({ from: sourceSquare, to: targetSquare });
-        return moveResult !== null;
+        return false;
     }
     
     const handleSelectPromotion = (piece) => {
@@ -810,6 +938,10 @@ export default function App() {
             promotion: piece 
         });
         setPromotionMove(null);
+    };
+    
+    const handleSquareRightClick = () => {
+        setPremove(null); // Clear premove on right click
     };
     
     const playerOrientation = useMemo(() => {
@@ -859,6 +991,12 @@ export default function App() {
                     setView('lobby'); 
                     return <GameSetup user={user} onGameStart={handleStartGame} onStartVsComputer={handleStartVsComputer} />;
                 }
+                
+                const premoveSquareStyles = premove ? {
+                    [premove.from]: { backgroundColor: 'rgba(255, 255, 0, 0.4)' },
+                    [premove.to]: { backgroundColor: 'rgba(255, 255, 0, 0.4)' },
+                } : {};
+
                 return (
                      <div className="relative">
                         <GameOverDialog 
@@ -870,7 +1008,6 @@ export default function App() {
                         <div className="relative flex flex-col lg:flex-row gap-8">
                             {promotionMove && <PromotionDialog color={playerOrientation} onSelectPromotion={handleSelectPromotion} />}
                             <div className="w-full lg:w-2/3">
-                                {/* ** NEW LAYOUT ** Captured pieces are now above/below the board */}
                                 <CapturedPiecesPanel 
                                     pieces={playerOrientation === 'white' ? gameData.capturedPieces.b : gameData.capturedPieces.w}
                                     color={playerOrientation === 'white' ? 'w' : 'b'}
@@ -880,6 +1017,8 @@ export default function App() {
                                     position={fen} 
                                     onPieceDrop={onDrop} 
                                     boardOrientation={playerOrientation} 
+                                    onSquareRightClick={handleSquareRightClick}
+                                    customSquareStyles={premoveSquareStyles}
                                     customBoardStyle={{ borderRadius: '8px', boxShadow: '0 5px 15px rgba(0, 0, 0, 0.5)' }} 
                                 />
                                 <CapturedPiecesPanel 
@@ -928,10 +1067,19 @@ export default function App() {
                         <p className="text-gray-300 hidden sm:block">{user.email}</p>
                         <button onClick={() => setView('profile')} className="bg-purple-600 px-4 py-2 rounded-md hover:bg-purple-700 transition">Profile</button>
                         <button onClick={handleLogout} className="bg-red-600 px-4 py-2 rounded-md hover:bg-red-700 transition">Logout</button>
+                        <button onClick={() => setShowSettings(true)} className="p-2 rounded-full hover:bg-gray-700 transition">
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                            </svg>
+                        </button>
                     </div>
                 )}
             </header>
-            <main className="w-full max-w-6xl flex-grow">{renderContent()}</main>
+            <main className="w-full max-w-6xl flex-grow">
+                {showSettings && <SettingsDialog settings={settings} setSettings={setSettings} onClose={() => setShowSettings(false)} />}
+                {renderContent()}
+            </main>
         </div>
     );
 }
