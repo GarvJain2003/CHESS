@@ -38,7 +38,6 @@ const firebaseConfig = {
     measurementId: import.meta.env.VITE_MEASUREMENT_ID
   };
 
-
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
@@ -607,6 +606,10 @@ const SettingsDialog = ({ settings, setSettings, onClose }) => {
         setSettings(s => ({ ...s, premovesEnabled: e.target.checked }));
     };
 
+    const handleHighlightToggle = (e) => {
+        setSettings(s => ({ ...s, highlightMoves: e.target.checked }));
+    };
+
     return (
         <div className="fixed inset-0 bg-black bg-opacity-75 flex justify-center items-center z-50">
             <div className="bg-gray-800 p-8 rounded-lg shadow-2xl w-full max-w-md">
@@ -635,6 +638,11 @@ const SettingsDialog = ({ settings, setSettings, onClose }) => {
                         <label htmlFor="premove-toggle" className="text-lg text-gray-300">Enable Premoves</label>
                         <input type="checkbox" id="premove-toggle" checked={settings.premovesEnabled} onChange={handlePremoveToggle} className="w-5 h-5"/>
                     </div>
+                    {/* ** NEW ** Highlight Moves Setting */}
+                    <div className="flex items-center justify-between">
+                        <label htmlFor="highlight-toggle" className="text-lg text-gray-300">Highlight Legal Moves</label>
+                        <input type="checkbox" id="highlight-toggle" checked={settings.highlightMoves} onChange={handleHighlightToggle} className="w-5 h-5"/>
+                    </div>
                 </div>
             </div>
         </div>
@@ -658,9 +666,12 @@ export default function App() {
             soundEnabled: true,
             soundTheme: 'default',
             premovesEnabled: false,
+            highlightMoves: true, // ** NEW **
         };
     });
     const [premove, setPremove] = useState(null);
+    // ** NEW ** State for move highlights
+    const [optionSquares, setOptionSquares] = useState({});
 
 
     useEffect(() => {
@@ -925,6 +936,7 @@ export default function App() {
                 return false;
             }
             const moveResult = makeMove({ from: sourceSquare, to: targetSquare });
+            if (moveResult) setOptionSquares({});
             return moveResult !== null;
         } else if (settings.premovesEnabled) {
             setPremove({ from: sourceSquare, to: targetSquare });
@@ -945,8 +957,43 @@ export default function App() {
     };
     
     const handleSquareRightClick = () => {
-        setPremove(null); // Clear premove on right click
+        setPremove(null); 
     };
+
+    function onSquareClick(square) {
+        if (!settings.highlightMoves) {
+            setOptionSquares({});
+            return;
+        };
+
+        const isMyTurn = 
+            (gameData.mode === 'computer' && game.turn() === 'w') ||
+            (gameData.mode === 'online' && (
+                (user.uid === gameData.player1?.uid && game.turn() === 'w') ||
+                (user.uid === gameData.player2?.uid && game.turn() === 'b')
+            ));
+
+        if (!isMyTurn) return;
+
+        const moves = game.moves({ square, verbose: true });
+        if (moves.length === 0) {
+            setOptionSquares({});
+            return;
+        }
+
+        const newSquares = {};
+        moves.forEach(move => {
+            const isCapture = move.flags.includes('c');
+            newSquares[move.to] = {
+                 background: isCapture 
+                    ? "radial-gradient(circle, rgba(255,0,0,.5) 85%, transparent 85%)"
+                    : "radial-gradient(circle, rgba(0,0,0,.1) 25%, transparent 25%)",
+                 borderRadius: "50%",
+            };
+        });
+        newSquares[square] = { background: "rgba(255, 255, 0, 0.4)" };
+        setOptionSquares(newSquares);
+    }
     
     const playerOrientation = useMemo(() => {
         if (!user || !gameData) return 'white';
@@ -1021,8 +1068,9 @@ export default function App() {
                                     position={fen} 
                                     onPieceDrop={onDrop} 
                                     boardOrientation={playerOrientation} 
+                                    onSquareClick={onSquareClick}
                                     onSquareRightClick={handleSquareRightClick}
-                                    customSquareStyles={premoveSquareStyles}
+                                    customSquareStyles={{...optionSquares, ...premoveSquareStyles}}
                                     customBoardStyle={{ borderRadius: '8px', boxShadow: '0 5px 15px rgba(0, 0, 0, 0.5)' }} 
                                 />
                                 <CapturedPiecesPanel 
