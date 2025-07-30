@@ -39,7 +39,6 @@ const firebaseConfig = {
   };
 
 
-
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
@@ -883,12 +882,17 @@ export default function App() {
             ));
         
         if (premove && isMyTurn) {
-            const gameCopy = new Chess(fen);
-            const move = gameCopy.move({ from: premove.from, to: premove.to, promotion: premove.promotion });
-            if (move) {
-                makeMove(premove);
+            try {
+                const gameCopy = new Chess(fen);
+                const move = gameCopy.move({ from: premove.from, to: premove.to, promotion: premove.promotion });
+                if (move) {
+                    makeMove(premove);
+                }
+            } catch (e) {
+                // Premove was illegal, do nothing
+            } finally {
+                setPremove(null);
             }
-            setPremove(null);
         }
     }, [fen, premove, game, gameData, user, makeMove]);
 
