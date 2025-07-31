@@ -164,6 +164,7 @@ const GameSetup = ({ user, onGameStart, onStartVsComputer, onStartOfflineGame })
             winner: null,
             winReason: null,
             drawOffer: null, 
+            rematchOffer: null,
             createdAt: serverTimestamp(),
             player1Time: selectedTime,
             player2Time: selectedTime,
@@ -504,13 +505,33 @@ const GameOverDialog = ({ gameData, user, onViewProfile, onRematch, onLeave }) =
     const winner = gameData.winner;
     const reason = gameData.winReason || 'Checkmate';
     const isWinner = winner && winner.uid === user.uid;
-    const isLoser = winner && winner.uid !== user.uid;
+    const myPlayerKey = user.uid === gameData.player1.uid ? 'player1' : 'player2';
+    const opponentPlayerKey = myPlayerKey === 'player1' ? 'player2' : 'player1';
 
     let message;
     if (winner) {
         message = isWinner ? 'You Won!' : `${winner.email.split('@')[0]} Won!`;
     } else {
         message = "It's a Draw!";
+    }
+
+    const handleRematchOffer = () => {
+        onRematch(myPlayerKey);
+    };
+
+    if (gameData.mode === 'online' && gameData.rematchOffer && gameData.rematchOffer !== myPlayerKey) {
+        return (
+             <div className="fixed inset-0 bg-black bg-opacity-80 flex justify-center items-center z-50">
+                <div className="bg-gray-800 p-10 rounded-lg shadow-2xl text-center">
+                    <h2 className="text-3xl font-bold mb-4">Rematch Offer</h2>
+                    <p className="text-lg text-gray-400 mb-8">{gameData[opponentPlayerKey].email} has offered a rematch.</p>
+                    <div className="flex justify-center space-x-4">
+                        <button onClick={() => onRematch('accept')} className="bg-green-600 px-6 py-2 rounded-md hover:bg-green-700">Accept</button>
+                        <button onClick={onLeave} className="bg-red-600 px-6 py-2 rounded-md hover:bg-red-700">Decline</button>
+                    </div>
+                </div>
+            </div>
+        );
     }
 
     return (
@@ -520,7 +541,11 @@ const GameOverDialog = ({ gameData, user, onViewProfile, onRematch, onLeave }) =
                 <p className="text-lg text-gray-400 mb-8">by {reason}</p>
                 <div className="flex justify-center space-x-4">
                     <button onClick={onViewProfile} className="bg-purple-600 px-6 py-2 rounded-md hover:bg-purple-700">Profile</button>
-                    {/* <button onClick={onRematch} className="bg-green-600 px-6 py-2 rounded-md hover:bg-green-700">Rematch</button> */}
+                    {gameData.mode === 'online' && (gameData.rematchOffer === myPlayerKey ? (
+                        <p className="text-yellow-400 px-6 py-2">Rematch offer sent...</p>
+                    ) : (
+                        <button onClick={handleRematchOffer} className="bg-green-600 px-6 py-2 rounded-md hover:bg-green-700">Rematch</button>
+                    ))}
                     <button onClick={onLeave} className="bg-gray-600 px-6 py-2 rounded-md hover:bg-gray-700">Leave Game</button>
                 </div>
             </div>
@@ -932,7 +957,7 @@ export default function App() {
 
         const isMyTurn = 
             (gameData.mode === 'computer' && game.turn() === 'w') ||
-            (gameData.mode === 'offline' && game.turn() === (gameData.moves.length % 2 === 0 ? 'w' : 'b')) ||
+            (gameData.mode === 'offline') ||
             (gameData.mode === 'online' && (
                 (user?.uid === gameData.player1?.uid && game.turn() === 'w') ||
                 (user?.uid === gameData.player2?.uid && game.turn() === 'b')
@@ -1046,6 +1071,54 @@ export default function App() {
         setGameId(null);
         setView('lobby');
     };
+    
+    const handleRematch = useCallback(async (action) => {
+        if (!gameData || gameData.mode !== 'online') return;
+
+        const gameRef = doc(db, 'games', gameId);
+        const myPlayerKey = user.uid === gameData.player1.uid ? 'player1' : 'player2';
+
+        if (action === 'accept') {
+            // Create a new game
+            const newGameId = user.uid + "_" + Date.now();
+            const newGameRef = doc(db, 'games', newGameId);
+            
+            await setDoc(newGameRef, {
+                ...gameData, // Copy settings from old game
+                fen: new Chess().fen(),
+                moves: [],
+                chatMessages: [],
+                capturedPieces: { w: [], b: [] }, 
+                status: 'active',
+                winner: null,
+                winReason: null,
+                drawOffer: null, 
+                rematchOffer: null,
+                createdAt: serverTimestamp(),
+                lastMoveTimestamp: serverTimestamp(),
+                // Swap players
+                player1: gameData.player2,
+                player2: gameData.player1,
+                playerIds: [gameData.player2.uid, gameData.player1.uid],
+                player1Time: gameData.timeControl,
+                player2Time: gameData.timeControl,
+            });
+
+            // Point old game to new game to trigger navigation for both players
+            await updateDoc(gameRef, { rematchedGameId: newGameId });
+
+        } else { // Offer rematch
+            await updateDoc(gameRef, { rematchOffer: myPlayerKey });
+        }
+    }, [gameData, gameId, user]);
+
+    // ** NEW ** Effect to handle navigation to the new game
+    useEffect(() => {
+        if (gameData?.rematchedGameId) {
+            handleStartGame(gameData.rematchedGameId);
+        }
+    }, [gameData?.rematchedGameId]);
+
 
     const renderContent = () => {
         if (!isAuthReady) return <div className="flex justify-center items-center h-64"><p>Authenticating...</p></div>;
@@ -1077,6 +1150,7 @@ export default function App() {
                             user={user} 
                             onViewProfile={() => setView('profile')}
                             onLeave={leaveGame}
+                            onRematch={handleRematch}
                         />
                         <div className="relative flex flex-col lg:flex-row gap-8">
                             {promotionMove && <PromotionDialog color={playerOrientation} onSelectPromotion={handleSelectPromotion} />}
@@ -1113,7 +1187,7 @@ export default function App() {
                                     {gameData.moves?.map((move, index) => (
                                         <div key={index} className="flex justify-between items-center text-gray-300">
                                            <span>{index % 2 === 0 ? `${Math.floor(index / 2) + 1}. ` : ''} {move.san}</span>
-                                           <span className="text-gray-500">{move.time}s</span>
+                                           {gameData.mode === 'online' && <span className="text-gray-500">{move.time}s</span>}
                                         </div>
                                     ))}
                                 </div>
