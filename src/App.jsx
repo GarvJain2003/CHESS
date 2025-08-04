@@ -23,7 +23,8 @@ import {
     orderBy,
     limit,
     serverTimestamp,
-    arrayUnion
+    arrayUnion,
+    addDoc 
 } from 'firebase/firestore';
 import * as Tone from 'tone';
 
@@ -879,7 +880,7 @@ export default function App() {
 
             const gameRef = doc(db, 'games', gameId);
             
-            await updateDoc(gameRef, {
+            const gameUpdate = {
                 fen: gameCopy.fen(),
                 moves: [...(gameData.moves || []), { san: result.san, time: timeTaken }],
                 capturedPieces: newCaptured,
@@ -889,7 +890,21 @@ export default function App() {
                 lastMoveTimestamp: serverTimestamp(),
                 drawOffer: null, 
                 ...timeUpdate
-            });
+            };
+
+            await updateDoc(gameRef, gameUpdate);
+
+            // ** THE FIX **
+            // Create a new document in the 'game_events' collection
+            const eventData = {
+                gameId: gameId,
+                moveNumber: (gameData.moves || []).length + 1,
+                playerColor: result.color,
+                move: result.san,
+                timestamp: serverTimestamp()
+            };
+            await addDoc(collection(db, "game_events"), eventData);
+
         } else { // Computer or Offline mode
             setGameData(prev => ({ 
                 ...prev, 
@@ -1071,7 +1086,7 @@ export default function App() {
         setGameId(null);
         setView('lobby');
     };
-    
+
     const handleRematch = useCallback(async (action) => {
         if (!gameData || gameData.mode !== 'online') return;
 
@@ -1175,7 +1190,7 @@ export default function App() {
                                 />
                             </div>
                             <div className="w-full lg:w-1/3 p-6 bg-gray-800 rounded-lg shadow-lg">
-                                {gameData.mode === 'online' && <GameClocks gameData={gameData} game={game} onTimeout={handleTimeout} />}
+                                {gameData.mode !== 'offline' && <GameClocks gameData={gameData} game={game} onTimeout={handleTimeout} />}
                                 <h3 className="text-2xl font-bold mb-4 border-b border-gray-600 pb-2">Game Info</h3>
                                 <div className="mb-4">{renderGameStatus()}</div>
                                 <div className="mb-4 space-y-2">
