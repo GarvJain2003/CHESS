@@ -40,6 +40,7 @@ const firebaseConfig = {
   };
 
 
+
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
@@ -895,15 +896,13 @@ export default function App() {
             await updateDoc(gameRef, gameUpdate);
 
             // ** THE FIX **
-            // Create a new document in the 'game_events' collection
-            const eventData = {
-                gameId: gameId,
+            const eventRef = collection(doc(db, "games", gameId), "game_events");
+            await addDoc(eventRef, {
                 moveNumber: (gameData.moves || []).length + 1,
                 playerColor: result.color,
                 move: result.san,
                 timestamp: serverTimestamp()
-            };
-            await addDoc(collection(db, "game_events"), eventData);
+            });
 
         } else { // Computer or Offline mode
             setGameData(prev => ({ 
