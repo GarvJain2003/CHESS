@@ -40,7 +40,6 @@ const firebaseConfig = {
   };
 
 
-
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
@@ -167,6 +166,7 @@ const GameSetup = ({ user, onGameStart, onStartVsComputer, onStartOfflineGame })
             winReason: null,
             drawOffer: null, 
             rematchOffer: null,
+            webrtc_signals: { offer: null, answer: null, iceCandidates: [] },
             createdAt: serverTimestamp(),
             player1Time: selectedTime,
             player2Time: selectedTime,
@@ -680,6 +680,158 @@ const SettingsDialog = ({ settings, setSettings, onClose }) => {
     );
 };
 
+const VideoChat = ({ gameData, gameId, user }) => {
+    const localVideoRef = useRef(null);
+    const remoteVideoRef = useRef(null);
+    const pcRef = useRef(null);
+    const localStreamRef = useRef(null);
+    const processedCandidatesRef = useRef(new Set());
+    const signalingUnsubRef = useRef(null);
+  
+    useEffect(() => {
+      if (!gameId || !gameData?.player1 || !gameData?.player2) return;
+  
+      let mounted = true;
+      const gameRef = doc(db, 'games', gameId);
+  
+      const servers = {
+        iceServers: [
+          { urls: ['stun:stun1.l.google.com:19302', 'stun:stun2.l.google.com:19302'] }
+        ],
+        iceCandidatePoolSize: 10,
+      };
+  
+      const init = async () => {
+        if (!mounted || pcRef.current) return;
+  
+        pcRef.current = new RTCPeerConnection(servers);
+  
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+          localStreamRef.current = stream;
+          if (localVideoRef.current) localVideoRef.current.srcObject = stream;
+          stream.getTracks().forEach(track => pcRef.current.addTrack(track, stream));
+        } catch (err) {
+          console.error('getUserMedia error', err);
+          return;
+        }
+  
+        pcRef.current.ontrack = (ev) => {
+          if (remoteVideoRef.current && ev.streams && ev.streams[0]) {
+            remoteVideoRef.current.srcObject = ev.streams[0];
+          }
+        };
+  
+        pcRef.current.onicecandidate = (event) => {
+          if (event.candidate) {
+            updateDoc(gameRef, {
+              'webrtc_signals.iceCandidates': arrayUnion({ ...event.candidate.toJSON(), uid: user.uid })
+            }).catch(e => console.warn('ice write failed', e));
+          }
+        };
+  
+        signalingUnsubRef.current = onSnapshot(gameRef, async (snap) => {
+          const data = snap.data();
+          if (!data || !data.webrtc_signals) return;
+  
+          const signals = data.webrtc_signals;
+  
+          if (user.uid === gameData.player2.uid && signals.offer && !signals.answer) {
+            try {
+              if (!pcRef.current.remoteDescription) {
+                await pcRef.current.setRemoteDescription(new RTCSessionDescription(signals.offer));
+                const answer = await pcRef.current.createAnswer();
+                await pcRef.current.setLocalDescription(answer);
+                await updateDoc(gameRef, { 'webrtc_signals.answer': { sdp: answer.sdp, type: answer.type } });
+              }
+            } catch (err) {
+              console.error('answer flow error', err);
+            }
+          }
+  
+          if (user.uid === gameData.player1.uid && signals.answer && !pcRef.current.remoteDescription) {
+            try {
+              await pcRef.current.setRemoteDescription(new RTCSessionDescription(signals.answer));
+            } catch (err) {
+              console.error('setRemoteDescription for answer failed', err);
+            }
+          }
+  
+          try {
+            (signals.iceCandidates || []).forEach(cand => {
+              const key = cand.candidate || JSON.stringify(cand);
+              if (cand.uid === user.uid) return;
+              if (processedCandidatesRef.current.has(key)) return;
+              processedCandidatesRef.current.add(key);
+              pcRef.current.addIceCandidate(new RTCIceCandidate(cand)).catch(e => {
+                console.warn('addIceCandidate failed', e);
+              });
+            });
+          } catch (err) {
+            console.warn('processing ICE candidates failed', err);
+          }
+        });
+  
+        if (user.uid === gameData.player1.uid) {
+          const snap = await getDoc(gameRef);
+          const existing = snap.exists() ? snap.data().webrtc_signals : null;
+          if (!existing || !existing.offer) {
+            const offer = await pcRef.current.createOffer();
+            await pcRef.current.setLocalDescription(offer);
+            await updateDoc(gameRef, { 'webrtc_signals.offer': { sdp: offer.sdp, type: offer.type } });
+          } else {
+            if (existing.offer && !pcRef.current.remoteDescription) {
+              await pcRef.current.setRemoteDescription(new RTCSessionDescription(existing.offer));
+            }
+          }
+        }
+      };
+  
+      init();
+  
+      return () => {
+        mounted = false;
+        if (signalingUnsubRef.current) {
+          try { signalingUnsubRef.current(); } catch(_) {}
+          signalingUnsubRef.current = null;
+        }
+        if (pcRef.current) {
+          try { pcRef.current.close(); } catch(_) {}
+          pcRef.current = null;
+        }
+        if (localStreamRef.current) {
+          try {
+            localStreamRef.current.getTracks().forEach(t => t.stop());
+          } catch(_) {}
+          localStreamRef.current = null;
+        }
+        processedCandidatesRef.current.clear();
+      };
+    }, [
+      gameId,
+      user?.uid,
+      gameData?.player1?.uid,
+      gameData?.player2?.uid
+    ]);
+  
+    return (
+      <div className="mt-6">
+        <h3 className="text-xl font-bold mb-2">Video Chat</h3>
+        <div className="grid grid-cols-2 gap-2">
+          <div className="bg-gray-900 rounded-md aspect-video">
+            <video ref={remoteVideoRef} autoPlay playsInline className="w-full h-full rounded-md"></video>
+          </div>
+          <div className="bg-gray-900 rounded-md aspect-video">
+            <video ref={localVideoRef} autoPlay playsInline muted className="w-full h-full rounded-md"></video>
+          </div>
+        </div>
+        <div className="flex justify-center space-x-4 mt-2">
+          <button className="bg-gray-700 p-2 rounded-full">Mic</button>
+          <button className="bg-gray-700 p-2 rounded-full">Cam</button>
+        </div>
+      </div>
+    );
+  };
 
 // Main App component
 export default function App() {
@@ -895,7 +1047,6 @@ export default function App() {
 
             await updateDoc(gameRef, gameUpdate);
 
-            // ** THE FIX **
             const eventRef = collection(doc(db, "games", gameId), "game_events");
             await addDoc(eventRef, {
                 moveNumber: (gameData.moves || []).length + 1,
@@ -1205,6 +1356,7 @@ export default function App() {
                                         </div>
                                     ))}
                                 </div>
+                                {gameData.mode === 'online' && <VideoChat gameData={gameData} gameId={gameId} user={user} />}
                                 {gameData.mode === 'online' && <ChatBox user={user} gameId={gameId} messages={gameData.chatMessages || []} />}
                                 {gameData.mode === 'online' && <GameActions user={user} gameData={gameData} gameId={gameId}/>}
                                 <button onClick={leaveGame} className="w-full mt-6 bg-gray-600 text-white py-2 rounded-md hover:bg-gray-700 transition">
