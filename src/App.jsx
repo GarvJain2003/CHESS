@@ -687,6 +687,8 @@ const VideoChat = ({ gameData, gameId, user }) => {
     const localStreamRef = useRef(null);
     const processedCandidatesRef = useRef(new Set());
     const signalingUnsubRef = useRef(null);
+    const [isAudioMuted, setIsAudioMuted] = useState(false);
+    const [isVideoMuted, setIsVideoMuted] = useState(false);
   
     useEffect(() => {
       if (!gameId || !gameData?.player1 || !gameData?.player2) return;
@@ -813,6 +815,26 @@ const VideoChat = ({ gameData, gameId, user }) => {
       gameData?.player1?.uid,
       gameData?.player2?.uid
     ]);
+
+    const toggleAudio = () => {
+        const newMutedState = !isAudioMuted;
+        if (localStreamRef.current) {
+            localStreamRef.current.getAudioTracks().forEach(track => {
+                track.enabled = !newMutedState;
+            });
+        }
+        setIsAudioMuted(newMutedState);
+    };
+
+    const toggleVideo = () => {
+        const newMutedState = !isVideoMuted;
+        if (localStreamRef.current) {
+            localStreamRef.current.getVideoTracks().forEach(track => {
+                track.enabled = !newMutedState;
+            });
+        }
+        setIsVideoMuted(newMutedState);
+    };
   
     return (
       <div className="mt-6">
@@ -826,8 +848,8 @@ const VideoChat = ({ gameData, gameId, user }) => {
           </div>
         </div>
         <div className="flex justify-center space-x-4 mt-2">
-          <button className="bg-gray-700 p-2 rounded-full">Mic</button>
-          <button className="bg-gray-700 p-2 rounded-full">Cam</button>
+          <button onClick={toggleAudio} className={`p-2 rounded-full ${isAudioMuted ? 'bg-red-600' : 'bg-gray-700'}`}>Mic</button>
+          <button onClick={toggleVideo} className={`p-2 rounded-full ${isVideoMuted ? 'bg-red-600' : 'bg-gray-700'}`}>Cam</button>
         </div>
       </div>
     );
