@@ -30,14 +30,14 @@ import * as Tone from 'tone';
 
 // --- Firebase Configuration ---
 const firebaseConfig = {
-    apiKey: import.meta.env.VITE_API_KEY,
-    authDomain: import.meta.env.VITE_AUTH_DOMAIN,
-    projectId: import.meta.env.VITE_PROJECT_ID,
-    storageBucket: import.meta.env.VITE_STORAGE_BUCKET,
-    messagingSenderId: import.meta.env.VITE_MESSAGING_SENDER_ID,
-    appId: import.meta.env.VITE_APP_ID,
-    measurementId: import.meta.env.VITE_MEASUREMENT_ID
-  };
+  apiKey: "AIzaSyB5DKiBIQ1N1lnmyvfoNgE7zM6dioaogSY",
+  authDomain: "chess-25608.firebaseapp.com",
+  projectId: "chess-25608",
+  storageBucket: "chess-25608.firebasestorage.app",
+  messagingSenderId: "720518216386",
+  appId: "1:720518216386:web:f6bd16f6bf862a22b5d95b",
+  measurementId: "G-JBWZEHVTHH"
+};
 
 
 const app = initializeApp(firebaseConfig);
@@ -877,6 +877,7 @@ export default function App() {
     const [premove, setPremove] = useState(null);
     // ** NEW ** State for move highlights
     const [optionSquares, setOptionSquares] = useState({});
+    const [moveFrom, setMoveFrom] = useState(null);
 
 
     useEffect(() => {
@@ -1139,6 +1140,9 @@ export default function App() {
 
 
     function onDrop(sourceSquare, targetSquare) {
+        setMoveFrom(null); // Clear click-to-move state
+        setOptionSquares({});
+
         if (!game || !gameData) return false;
         if (gameData.status !== 'active' || promotionMove) return false;
 
@@ -1150,31 +1154,26 @@ export default function App() {
                 (user?.uid === gameData.player2?.uid && game.turn() === 'b')
             ));
         
-        const gameCopy = new Chess(fen);
-        const moves = gameCopy.moves({ square: sourceSquare, verbose: true });
-        const move = moves.find(m => m.to === targetSquare);
-
-        if (!move) {
-            if (!isMyTurn && settings.premovesEnabled && gameData.mode === 'online') {
+        if (!isMyTurn) {
+            if (settings.premovesEnabled && gameData.mode === 'online') {
                 setPremove({ from: sourceSquare, to: targetSquare });
             }
             return false;
         }
 
-        if (isMyTurn) {
-             if (move.flags.includes('p')) {
-                setPromotionMove({ from: sourceSquare, to: targetSquare });
-                return false;
-            }
-            const moveResult = makeMove({ from: sourceSquare, to: targetSquare });
-            if (moveResult) setOptionSquares({});
-            return moveResult !== null;
-        } else if (settings.premovesEnabled && gameData.mode === 'online') {
-            setPremove({ from: sourceSquare, to: targetSquare });
+        const gameCopy = new Chess(fen);
+        const moves = gameCopy.moves({ square: sourceSquare, verbose: true });
+        const move = moves.find(m => m.to === targetSquare);
+        
+        if (!move) return false;
+        
+        if (move.flags.includes('p')) {
+            setPromotionMove({ from: sourceSquare, to: targetSquare });
             return false;
         }
         
-        return false;
+        const moveResult = makeMove({ from: sourceSquare, to: targetSquare });
+        return moveResult !== null;
     }
     
     const handleSelectPromotion = (piece) => {
@@ -1192,8 +1191,14 @@ export default function App() {
     };
 
     function onSquareClick(square) {
+        if (moveFrom && optionSquares[square]) {
+            onDrop(moveFrom, square);
+            return;
+        }
+
         if (!settings.highlightMoves) {
             setOptionSquares({});
+            setMoveFrom(null);
             return;
         };
 
@@ -1207,24 +1212,33 @@ export default function App() {
 
         if (!isMyTurn) return;
 
-        const moves = game.moves({ square, verbose: true });
-        if (moves.length === 0) {
-            setOptionSquares({});
-            return;
-        }
+        const piece = game.get(square);
+        if (piece && piece.color === game.turn()){
+            const moves = game.moves({ square, verbose: true });
+            if (moves.length === 0) {
+                setOptionSquares({});
+                setMoveFrom(null);
+                return;
+            }
+            
+            setMoveFrom(square);
+            const newSquares = {};
+            moves.forEach(move => {
+                const isCapture = move.flags.includes('c');
+                newSquares[move.to] = {
+                     background: isCapture 
+                        ? "radial-gradient(circle, rgba(255,0,0,.5) 85%, transparent 85%)"
+                        : "radial-gradient(circle, rgba(0,0,0,.1) 25%, transparent 25%)",
+                     borderRadius: "50%",
+                };
+            });
+            newSquares[square] = { background: "rgba(255, 255, 0, 0.4)" };
+            setOptionSquares(newSquares);
 
-        const newSquares = {};
-        moves.forEach(move => {
-            const isCapture = move.flags.includes('c');
-            newSquares[move.to] = {
-                 background: isCapture 
-                    ? "radial-gradient(circle, rgba(255,0,0,.5) 85%, transparent 85%)"
-                    : "radial-gradient(circle, rgba(0,0,0,.1) 25%, transparent 25%)",
-                 borderRadius: "50%",
-            };
-        });
-        newSquares[square] = { background: "rgba(255, 255, 0, 0.4)" };
-        setOptionSquares(newSquares);
+        } else {
+             setMoveFrom(null);
+             setOptionSquares({});
+        }
     }
     
     const playerOrientation = useMemo(() => {
@@ -1419,3 +1433,4 @@ export default function App() {
         </div>
     );
 }
+
