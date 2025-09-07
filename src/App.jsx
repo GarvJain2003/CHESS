@@ -30,14 +30,14 @@ import * as Tone from 'tone';
 
 // --- Firebase Configuration ---
 const firebaseConfig = {
-  apiKey: "AIzaSyB5DKiBIQ1N1lnmyvfoNgE7zM6dioaogSY",
-  authDomain: "chess-25608.firebaseapp.com",
-  projectId: "chess-25608",
-  storageBucket: "chess-25608.firebasestorage.app",
-  messagingSenderId: "720518216386",
-  appId: "1:720518216386:web:f6bd16f6bf862a22b5d95b",
-  measurementId: "G-JBWZEHVTHH"
-};
+    apiKey: import.meta.env.VITE_API_KEY,
+    authDomain: import.meta.env.VITE_AUTH_DOMAIN,
+    projectId: import.meta.env.VITE_PROJECT_ID,
+    storageBucket: import.meta.env.VITE_STORAGE_BUCKET,
+    messagingSenderId: import.meta.env.VITE_MESSAGING_SENDER_ID,
+    appId: import.meta.env.VITE_APP_ID,
+    measurementId: import.meta.env.VITE_MEASUREMENT_ID
+  };
 
 
 const app = initializeApp(firebaseConfig);
@@ -878,6 +878,7 @@ export default function App() {
     // ** NEW ** State for move highlights
     const [optionSquares, setOptionSquares] = useState({});
     const [moveFrom, setMoveFrom] = useState(null);
+    const [moveHighlight, setMoveHighlight] = useState(null);
 
 
     useEffect(() => {
@@ -895,6 +896,16 @@ export default function App() {
         }
     }, [fen]);
     
+    // Use the explicit lastMove field from gameData when available (Option B).
+    // This is O(1) and scales far better than replaying SAN history on every render.
+    useEffect(() => {
+        if (gameData?.lastMove?.from && gameData?.lastMove?.to) {
+            setMoveHighlight({ from: gameData.lastMove.from, to: gameData.lastMove.to });
+        } else {
+            setMoveHighlight(null);
+        }
+    }, [gameData?.lastMove]);
+
     useEffect(() => {
         const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
             setUser(currentUser);
@@ -936,6 +947,7 @@ export default function App() {
         const bestMove = possibleMoves[Math.floor(Math.random() * possibleMoves.length)];
         
         const gameCopy = new Chess(fen);
+        // result contains .from and .to because bestMove is verbose
         const result = gameCopy.move(bestMove.san);
 
         const currentCaptured = gameData.capturedPieces || { w: [], b: [] };
@@ -943,16 +955,17 @@ export default function App() {
             w: [...(currentCaptured.w || [])],
             b: [...(currentCaptured.b || [])],
         };
-        
-        if (result.captured) {
+        if (result && result.captured) {
+            // AI is black so captured piece is recorded opposite
             newCaptured.b.push(result.captured);
         }
-        
+
         setGameData(prev => ({ 
             ...prev, 
             fen: gameCopy.fen(),
-            moves: [...(prev.moves || []), { san: bestMove.san, time: 0 }],
-            capturedPieces: newCaptured
+            moves: [...(prev.moves || []), { san: bestMove.san, from: result?.from, to: result?.to, time: 0, moveNumber: (prev.moves || []).length + 1 }],
+            capturedPieces: newCaptured,
+            lastMove: result ? { from: result.from, to: result.to, san: result.san, moveNumber: (prev.moves || []).length + 1 } : prev.lastMove
         }));
     }, [game, fen, gameData]);
 
@@ -979,6 +992,7 @@ export default function App() {
             player1: { uid: user.uid, email: user.email },
             player2: { uid: 'AI', email: 'Computer' },
             status: 'active',
+            lastMove: null,
         });
         setGameId('local_computer_game');
         setView('game');
@@ -993,6 +1007,7 @@ export default function App() {
             player1: { email: 'White' },
             player2: { email: 'Black' },
             status: 'active',
+            lastMove: null,
         });
         setGameId('local_offline_game');
         setView('game');
@@ -1056,14 +1071,19 @@ export default function App() {
 
             const gameRef = doc(db, 'games', gameId);
             
+            // Build move object including from/to and moveNumber
+            const newMoveObj = { san: result.san, from: result.from, to: result.to, time: timeTaken, moveNumber: (gameData.moves || []).length + 1 };
+            const lastMoveObj = { from: result.from, to: result.to, san: result.san, moveNumber: newMoveObj.moveNumber };
+
             const gameUpdate = {
                 fen: gameCopy.fen(),
-                moves: [...(gameData.moves || []), { san: result.san, time: timeTaken }],
+                moves: [...(gameData.moves || []), newMoveObj],
                 capturedPieces: newCaptured,
                 status: newStatus,
                 winner: winner,
                 winReason: winReason,
                 lastMoveTimestamp: serverTimestamp(),
+                lastMove: lastMoveObj,
                 drawOffer: null, 
                 ...timeUpdate
             };
@@ -1079,14 +1099,16 @@ export default function App() {
             });
 
         } else { // Computer or Offline mode
+            const moveNumber = (gameData.moves || []).length + 1;
             setGameData(prev => ({ 
                 ...prev, 
                 fen: gameCopy.fen(), 
-                moves: [...(prev.moves || []), { san: result.san, time: 0 }],
+                moves: [...(prev.moves || []), { san: result.san, from: result.from, to: result.to, time: 0, moveNumber }],
                 capturedPieces: newCaptured,
                 status: newStatus,
                 winner: winner,
                 winReason: winReason,
+                lastMove: { from: result.from, to: result.to, san: result.san, moveNumber }
             }));
         }
         return result;
@@ -1343,6 +1365,11 @@ export default function App() {
                     [premove.from]: { backgroundColor: 'rgba(255, 255, 0, 0.4)' },
                     [premove.to]: { backgroundColor: 'rgba(255, 255, 0, 0.4)' },
                 } : {};
+                
+                const lastMoveStyles = moveHighlight ? {
+                    [moveHighlight.from]: { backgroundColor: 'rgba(255, 255, 0, 0.4)' },
+                    [moveHighlight.to]: { backgroundColor: 'rgba(255, 255, 0, 0.4)' },
+                } : {};
 
                 return (
                      <div className="relative">
@@ -1367,7 +1394,7 @@ export default function App() {
                                     boardOrientation={playerOrientation} 
                                     onSquareClick={onSquareClick}
                                     onSquareRightClick={handleSquareRightClick}
-                                    customSquareStyles={{...optionSquares, ...premoveSquareStyles}}
+                                    customSquareStyles={{...optionSquares, ...premoveSquareStyles, ...lastMoveStyles}}
                                     customBoardStyle={{ borderRadius: '8px', boxShadow: '0 5px 15px rgba(0, 0, 0, 0.5)' }} 
                                 />
                                 <CapturedPiecesPanel 
@@ -1411,7 +1438,7 @@ export default function App() {
     return (
         <div className="min-h-screen bg-gray-900 text-white p-4 sm:p-6 md:p-8 flex flex-col items-center">
             <header className="w-full max-w-6xl flex justify-between items-center mb-8">
-                <h1 className="text-4xl font-bold tracking-wider">Smart Chess</h1>
+                <h1 className="text-4xl font-bold tracking-wider">Shatranj</h1>
                 {user && (
                     <div className="flex items-center space-x-4">
                         <p className="text-gray-300 hidden sm:block">{user.email}</p>
@@ -1433,4 +1460,3 @@ export default function App() {
         </div>
     );
 }
-
