@@ -1246,15 +1246,17 @@ export default function App() {
             setMoveFrom(square);
             const newSquares = {};
             moves.forEach(move => {
-                const isCapture = move.flags.includes('c');
+                // Prefer move.captured (boolean/char) when available — it's the most reliable indicator.
+                const isCapture = Boolean(move.captured) || (move.flags && move.flags.includes('c'));
                 newSquares[move.to] = {
-                     background: isCapture 
-                        ? "radial-gradient(circle, rgba(255,0,0,.5) 85%, transparent 85%)"
-                        : "radial-gradient(circle, rgba(0,0,0,.1) 25%, transparent 25%)",
-                     borderRadius: "50%",
+                    background: isCapture
+                        ? "radial-gradient(circle, rgba(255,0,0,.55) 85%, transparent 85%)"
+                        : "radial-gradient(circle, rgba(0,0,0,.12) 25%, transparent 25%)",
+                    borderRadius: "50%",
+                    transition: "background-color 120ms ease, box-shadow 120ms ease"
                 };
             });
-            newSquares[square] = { background: "rgba(255, 255, 0, 0.4)" };
+            newSquares[square] = { background: "rgba(255, 255, 0, 0.4)", transition: "background-color 120ms ease, box-shadow 120ms ease" };
             setOptionSquares(newSquares);
 
         } else {
@@ -1367,8 +1369,8 @@ export default function App() {
                 } : {};
                 
                 const lastMoveStyles = moveHighlight ? {
-                    [moveHighlight.from]: { backgroundColor: 'rgba(255, 255, 0, 0.4)' },
-                    [moveHighlight.to]: { backgroundColor: 'rgba(255, 255, 0, 0.4)' },
+                    [moveHighlight.from]: { backgroundColor: 'rgba(255, 255, 0, 0.4)', transition: 'background-color 120ms ease, box-shadow 120ms ease' },
+                    [moveHighlight.to]: { backgroundColor: 'rgba(255, 255, 0, 0.4)', transition: 'background-color 120ms ease, box-shadow 120ms ease' },
                 } : {};
 
                 return (
@@ -1388,7 +1390,6 @@ export default function App() {
                                     color={playerOrientation === 'white' ? 'w' : 'b'}
                                 />
                                 <Chessboard 
-                                    key={fen}
                                     position={fen} 
                                     onPieceDrop={onDrop} 
                                     boardOrientation={playerOrientation} 
