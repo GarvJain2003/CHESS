@@ -1,0 +1,2 @@
+# Ignore the ESLint config itself so predeploy lint won't error on module/require in the config.
+.eslintrc.js

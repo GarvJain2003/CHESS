@@ -1,0 +1,14 @@
+{
+    "indexes": [
+      {
+        "collectionGroup": "matchmaking_requests",
+        "queryScope": "COLLECTION",
+        "fields": [
+          { "fieldPath": "timeControl", "order": "ASCENDING" },
+          { "fieldPath": "createdAt", "order": "ASCENDING" }
+        ]
+      }
+    ],
+    "fieldOverrides": []
+  }
+  
