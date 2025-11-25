@@ -1,6 +1,5 @@
 /* eslint-env node */
 const admin = require("firebase-admin");
-const functions = require("firebase-functions/v2");
 const { onDocumentCreated } = require("firebase-functions/v2/firestore");
 const { Chess } = require("chess.js");
 

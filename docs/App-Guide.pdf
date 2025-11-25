@@ -1,0 +1,462 @@
+%PDF-1.4
+1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj
+2 0 obj << /Type /Pages /Count 5 /Kids [4 0 R 6 0 R 8 0 R 10 0 R 12 0 R] >> endobj
+3 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj
+4 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 5 0 R >> endobj
+5 0 obj << /Length 3613 >> stream
+BT
+/F1 11 Tf
+72 720 Td
+(# App.jsx Deep Dive \(Shatranj\)) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(This file is the main client application. It wires Firebase, chess logic, tournaments, quick) Tj
+0 -14 Td
+(matchmaking, chat, video, sounds, and all screens. Use this as a map when onboarding.) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(## High-level structure) Tj
+0 -14 Td
+(- **Imports:** React hooks, `chess.js`, `react-chessboard`, Firebase client SDK \(Auth +) Tj
+0 -14 Td
+(Firestore\), Tone.js for sounds, local components \(`ConnectBoardModal`\), and a few utilities.) Tj
+0 -14 Td
+(- **Firebase init:** Reads `VITE_*` env vars to initialize the app, auth, and Firestore) Tj
+0 -14 Td
+(instances.) Tj
+0 -14 Td
+(- **Sound system:** `soundThemes` and `playSound` provide move/capture/check/game-over) Tj
+0 -14 Td
+(sounds using Tone.js.) Tj
+0 -14 Td
+(- **Helpers:** `logStep` for timestamped debug logs; `makeGameId`, `shuffle`, and) Tj
+0 -14 Td
+(`incrementTournamentScore` transaction helper.) Tj
+0 -14 Td
+(- **Services \(Firestore helpers\):**) Tj
+0 -14 Td
+(  - `createGame` – writes a new `games/{id}` document with initial FEN, timers, chat,) Tj
+0 -14 Td
+(captured pieces, WebRTC signal slots, tournament metadata, invite-only flag, spectators) Tj
+0 -14 Td
+(fields.) Tj
+0 -14 Td
+(  - `createTournament` – creates `tournaments` doc with host, scores map, players array,) Tj
+0 -14 Td
+(lobby status.) Tj
+0 -14 Td
+(  - `joinTournament` – transactionally adds player and initializes their score to 0.) Tj
+0 -14 Td
+(  - `startTournament` – shuffles players, creates round 1 matches \(pairings or BYE\), creates) Tj
+0 -14 Td
+(games via `createGame`, and sets tournament status/round.) Tj
+0 -14 Td
+(  - `checkRoundCompletion` – after all matches complete, transactionally advances the round) Tj
+0 -14 Td
+(or finishes the tournament; then creates next-round matches sorted by scores \(Swiss-ish) Tj
+0 -14 Td
+(pairing\).) Tj
+0 -14 Td
+(  - `updateTournamentMatchResult` – marks a match complete, updates scores \(win/draw\), and) Tj
+0 -14 Td
+(triggers round completion.) Tj
+0 -14 Td
+(- **UI components defined inside App.jsx:** Auth form, lobby and tournament UIs, game pages,) Tj
+0 -14 Td
+(clocks, dialogs, chat, video chat, settings, etc. \(details below\).) Tj
+0 -14 Td
+(- **Main `App` component:** Manages auth state, routing between views, live Firestore) Tj
+0 -14 Td
+(subscriptions, move handling, timers, premoves, AI moves, hardware moves, WebRTC signaling,) Tj
+0 -14 Td
+(and URL deep links for games/tournaments.) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(## Data shapes \(client-side expectations\)) Tj
+0 -14 Td
+(- **Game doc:** `mode`, `timeControl`, `player1/2 { uid, email }`, `playerIds`, `fen`,) Tj
+0 -14 Td
+(`moves[]`, `chatMessages[]`, `capturedPieces`, `status`, `winner`, `winReason`, `drawOffer`,) Tj
+0 -14 Td
+(`rematchOffer`, `rematchedGameId`, `webrtc_signals { offer, answer, iceCandidates[] }`,) Tj
+0 -14 Td
+(`createdAt`, `lastMoveTimestamp`, per-player clocks, `lastMove`, `tournamentId`,) Tj
+0 -14 Td
+(`tournamentRound`, `inviteOnly`, `spectators`, `spectatorRequests`, `createdByUid`.) Tj
+0 -14 Td
+(- **Tournament doc:** `name`, `maxPlayers`, `timeControl`, `createdBy`, `players[]`,) Tj
+0 -14 Td
+(`scores{}`, `status`, `currentRound`, `winnerId`, `createdAt`; subcollection) Tj
+0 -14 Td
+(`rounds/round_{n}/matches` with `playerWhite/Black`, `gameId`, `status`, `winnerId`,) Tj
+0 -14 Td
+(`isBye`.) Tj
+0 -14 Td
+(- **Matchmaking doc:** `{ uid, email, timeControl, createdAt }` \(paired by Cloud Function\).) Tj
+0 -14 Td
+(- **Hardware:** `boards/{boardId}` and `hardware_moves/{boardCode}` \(moves delivered to) Tj
+0 -14 Td
+ET
+endstream
+endobj
+6 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 7 0 R >> endobj
+7 0 obj << /Length 2572 >> stream
+BT
+/F1 11 Tf
+72 720 Td
+(client for hardware-test mode\).) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(## Components inside App.jsx) Tj
+0 -14 Td
+(### ErrorBoundary) Tj
+0 -14 Td
+(Catches render errors and shows a friendly reload prompt.) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(### AuthForm) Tj
+0 -14 Td
+(Email/password login and registration via Firebase Auth. Uses `onAuthStateChanged` in the) Tj
+0 -14 Td
+(main App to drive routing.) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(### CreateTournamentModal) Tj
+0 -14 Td
+(Collects name, max players, time control, and whether the host plays; calls) Tj
+0 -14 Td
+(`createTournament` then navigates to the lobby.) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(### TournamentLobby) Tj
+0 -14 Td
+(- Subscribes to the tournament doc in real-time.) Tj
+0 -14 Td
+(- Shows players, status, shareable link, standings, and current round matches.) Tj
+0 -14 Td
+(- Host controls: start tournament, force match result, kick player.) Tj
+0 -14 Td
+(- Joining: `joinTournament` transaction; Host starts via `startTournament`.) Tj
+0 -14 Td
+(- For each match: play \(if you’re in it and ongoing\) or watch \(spectator\) buttons.) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(### GameSetup \(main lobby\)) Tj
+0 -14 Td
+(- Lists open waiting games \(not invite-only\) and open tournaments \(status=lobby\) via) Tj
+0 -14 Td
+(`onSnapshot`.) Tj
+0 -14 Td
+(- Create game: uses `createGame` with selected time control and optional invite-only flag.) Tj
+0 -14 Td
+(- Join game: transactionally claims `player2` on a waiting game.) Tj
+0 -14 Td
+(- Quick Match: tries to claim an existing waiting game with same time control; otherwise) Tj
+0 -14 Td
+(writes a `matchmaking_requests` doc and listens for a newly created game involving you.) Tj
+0 -14 Td
+(- Other buttons: vs computer \(local AI\), pass-and-play offline, connect hardware board) Tj
+0 -14 Td
+(\(opens `ConnectBoardModal`\), create tournament.) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(### ProfilePage) Tj
+0 -14 Td
+(Fetches last 50 finished games for the user; links to review.) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(### GameReviewPage) Tj
+0 -14 Td
+(Replays finished games by walking move list; uses `Chessboard` in read-only mode.) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(### GameClocks) Tj
+0 -14 Td
+(Derives remaining time from stored clocks + `lastMoveTimestamp`; detects and reports) Tj
+0 -14 Td
+(timeouts to Firestore.) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(### PromotionDialog) Tj
+0 -14 Td
+(Modal for pawn promotion choice; feeds back to move handler.) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(### ChatBox) Tj
+0 -14 Td
+(Inline chat writing to `games.chatMessages` \(arrayUnion\). Scrolls to bottom on new messages.) Tj
+0 -14 Td
+ET
+endstream
+endobj
+8 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 9 0 R >> endobj
+9 0 obj << /Length 2685 >> stream
+BT
+/F1 11 Tf
+72 720 Td
+() Tj
+0 -14 Td
+(### GameOverDialog) Tj
+0 -14 Td
+(Shown when status is `finished`; indicates winner/reason. Supports rematch offer/accept for) Tj
+0 -14 Td
+(non-tournament online games.) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(### GameActions) Tj
+0 -14 Td
+(Draw offer/accept/decline and resign. Updates Firestore and tournament match results when) Tj
+0 -14 Td
+(applicable.) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(### CapturedPiecesPanel) Tj
+0 -14 Td
+(Displays captured pieces \(icons from chess.com CDN\) sorted by piece importance.) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(### SettingsDialog) Tj
+0 -14 Td
+(Local settings persisted to `localStorage`: sound on/off, sound theme, premoves, highlight) Tj
+0 -14 Td
+(legal moves.) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(### VideoChat) Tj
+0 -14 Td
+(WebRTC 1:1 video/audio between the two players only. Flow:) Tj
+0 -14 Td
+(- Creates `RTCPeerConnection` with public STUN.) Tj
+0 -14 Td
+(- Grabs local media; adds tracks to PC.) Tj
+0 -14 Td
+(- Player1 creates offer → stored in `games.webrtc_signals.offer`.) Tj
+0 -14 Td
+(- Player2 reads offer, creates answer → `webrtc_signals.answer`.) Tj
+0 -14 Td
+(- ICE candidates exchanged via `webrtc_signals.iceCandidates` array; each candidate tagged) Tj
+0 -14 Td
+(with sender UID and de-duped.) Tj
+0 -14 Td
+(- Blocks host/spectators \(message shown\) to avoid breaking the 1:1 signaling model.) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(## Main App component \(behavior\)) Tj
+0 -14 Td
+(### Global state) Tj
+0 -14 Td
+(`user`, `isAuthReady`, `view`, `gameId`, `tournamentId`, `gameData`, `reviewGameData`,) Tj
+0 -14 Td
+(promotion state, settings, premove, move highlights, modals \(connect board, create) Tj
+0 -14 Td
+(tournament\), mobile accordion state, and refs for game data, hardware move handler, request) Tj
+0 -14 Td
+(listeners, etc.) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(### Derived values) Tj
+0 -14 Td
+(- `fen` from `gameData`.) Tj
+0 -14 Td
+(- `game` from `chess.js` built from FEN.) Tj
+0 -14 Td
+(- `playerOrientation` \(white if player1, black if player2, white for offline/hardware\).) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(### Effects and subscriptions) Tj
+0 -14 Td
+(- **Auth listener:** `onAuthStateChanged` sets `user` and resets game/view when signed out.) Tj
+0 -14 Td
+(- **Game subscription:** `onSnapshot` on `games/{gameId}` unless it is a local/offline game;) Tj
+0 -14 Td
+(updates `gameData`.) Tj
+0 -14 Td
+(- **Tournament redirect:** When a tournament game finishes, auto-open next active game in) Tj
+0 -14 Td
+(that tournament if found.) Tj
+0 -14 Td
+(- **URL deep links:** If `?tournamentId` present after auth, open tournament lobby; if) Tj
+0 -14 Td
+(`?gameId`, join/spectate that game \(transactionally claim if waiting\).) Tj
+0 -14 Td
+ET
+endstream
+endobj
+10 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 11 0 R >> endobj
+11 0 obj << /Length 3117 >> stream
+BT
+/F1 11 Tf
+72 720 Td
+(- **AI moves:** For `mode === 'computer'`, black makes a random legal move after 500ms.) Tj
+0 -14 Td
+(- **Move highlights:** Tracks last move for square highlighting.) Tj
+0 -14 Td
+(- **Hardware moves:** For `mode === 'hardware_test'`, subscribe to) Tj
+0 -14 Td
+(`hardware_moves/{boardCode}` and apply new moves in order.) Tj
+0 -14 Td
+(- **Settings persistence:** Syncs to `localStorage`.) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(### Move handling) Tj
+0 -14 Td
+(- `makeMove` validates with `chess.js`, plays sounds, updates `capturedPieces`, determines) Tj
+0 -14 Td
+(game over, and writes to Firestore for online games \(including clocks, lastMove, drawOffer) Tj
+0 -14 Td
+(reset, game events subcollection\). For tournament games, updates match results.) Tj
+0 -14 Td
+(- `onDrop` \(board interaction\) guards turn logic, premoves, promotions, and calls) Tj
+0 -14 Td
+(`makeMove`.) Tj
+0 -14 Td
+(- `handleSelectPromotion` finishes stored promotion intent.) Tj
+0 -14 Td
+(- Premove: if it is not your turn and premoves are enabled, stores the move and executes it) Tj
+0 -14 Td
+(when your turn arrives.) Tj
+0 -14 Td
+(- Timeouts: `handleTimeout` marks winner by time in Firestore and tournament match.) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(### Game lifecycle helpers) Tj
+0 -14 Td
+(- `handleStartVsComputer`, `handleStartOfflineGame`, `handleConnectHardwareGame` create) Tj
+0 -14 Td
+(local gameData for respective modes.) Tj
+0 -14 Td
+(- `leaveGame` returns to lobby or tournament lobby depending on `tournamentId`.) Tj
+0 -14 Td
+(- `handleRematch`/`rematchOffer` flow for non-tournament online games; auto-joins) Tj
+0 -14 Td
+(`rematchedGameId` when present.) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(### UI rendering) Tj
+0 -14 Td
+(- `renderContent` switches among views: lobby \(GameSetup\), tournament lobby, game, profile,) Tj
+0 -14 Td
+(review.) Tj
+0 -14 Td
+(- Header shows user email, profile button, logout, and settings.) Tj
+0 -14 Td
+(- Settings and modals rendered portal-style within main layout.) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(## Data flow highlights) Tj
+0 -14 Td
+(- **Creating games:** Lobby → `createGame` writes Firestore → game screen subscribes to) Tj
+0 -14 Td
+(`games/{id}`.) Tj
+0 -14 Td
+(- **Joining games:** Transaction updates `player2` and status to `active`, sets clocks.) Tj
+0 -14 Td
+(- **Quick Match:** Firestore Cloud Function pairs `matchmaking_requests` and creates a game;) Tj
+0 -14 Td
+(client listens for new active game containing the user.) Tj
+0 -14 Td
+(- **Tournaments:** Host starts → creates games for matches. Match completion flows into) Tj
+0 -14 Td
+(score updates and potential round advancement; Swiss-ish pairing sorted by scores for) Tj
+0 -14 Td
+(subsequent rounds.) Tj
+0 -14 Td
+(- **WebRTC:** Signals stored on the game doc; only two participants supported.) Tj
+0 -14 Td
+(- **Hardware:** Local game uses Firestore `hardware_moves` as an input feed; does not write) Tj
+0 -14 Td
+(moves back.) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(## Extensibility notes) Tj
+0 -14 Td
+(- Split App.jsx into feature modules \(auth, lobby, tournaments, game play, video, hardware\)) Tj
+0 -14 Td
+(for testability.) Tj
+0 -14 Td
+ET
+endstream
+endobj
+12 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 13 0 R >> endobj
+13 0 obj << /Length 1131 >> stream
+BT
+/F1 11 Tf
+72 720 Td
+(- Move shared Firestore types to a separate file and consider TypeScript for safer payloads.) Tj
+0 -14 Td
+(- WebRTC for >2 peers or host/spectators would need a mesh/SFU design and different) Tj
+0 -14 Td
+(signaling structure.) Tj
+0 -14 Td
+(- Hardware collections are openly writable by signed-in users per current rules; lock down) Tj
+0 -14 Td
+(for production.) Tj
+0 -14 Td
+(- Tailwind is included via CDN; migrate to build-time Tailwind for theming/purge if needed.) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(## Key entry points in code) Tj
+0 -14 Td
+(- Firebase init and config: top of `src/App.jsx`.) Tj
+0 -14 Td
+(- Service helpers: `createGame`, tournament helpers, WebRTC helper flows.) Tj
+0 -14 Td
+(- Lobby UX: `GameSetup` component.) Tj
+0 -14 Td
+(- Tournament UX: `TournamentLobby` + round/match helpers.) Tj
+0 -14 Td
+(- Game UX and logic: `renderContent` branch for `view === 'game'` plus `makeMove`, `onDrop`,) Tj
+0 -14 Td
+(`GameActions`, `GameOverDialog`, `GameClocks`, `VideoChat`, `ChatBox`.) Tj
+0 -14 Td
+(- Navigation + deep links: `useEffect` blocks near the bottom of `App` for query params.) Tj
+0 -14 Td
+ET
+endstream
+endobj
+xref
+0 14
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000141 00000 n 
+0000000211 00000 n 
+0000000337 00000 n 
+0000004002 00000 n 
+0000004128 00000 n 
+0000006752 00000 n 
+0000006878 00000 n 
+0000009615 00000 n 
+0000009743 00000 n 
+0000012913 00000 n 
+0000013041 00000 n 
+trailer << /Size 14 /Root 1 0 R >>
+startxref
+14225
+%%EOF
