@@ -22,7 +22,9 @@ export default function S_Screen({ onFinish, src = "/intro.mp4" }) {
       await v.play();
       if (v.requestFullscreen) await v.requestFullscreen();
       else if (v.webkitEnterFullscreen) v.webkitEnterFullscreen();
-    } catch {}
+    } catch (e) {
+      console.error("Fullscreen/Autoplay failed", e);
+    }
   };
 
   return (

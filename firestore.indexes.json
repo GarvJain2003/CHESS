@@ -1,14 +1,31 @@
 {
-    "indexes": [
-      {
-        "collectionGroup": "matchmaking_requests",
-        "queryScope": "COLLECTION",
-        "fields": [
-          { "fieldPath": "timeControl", "order": "ASCENDING" },
-          { "fieldPath": "createdAt", "order": "ASCENDING" }
-        ]
-      }
-    ],
-    "fieldOverrides": []
-  }
-  
+  "indexes": [
+    {
+      "collectionId": "matchmaking_requests",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "timeControl", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionId": "games",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "timeControl", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionId": "games",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "playerIds", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

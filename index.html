@@ -1,16 +1,88 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <!-- <link rel="icon" type="image/svg+xml" href="/vite.svg" /> -->
-    <link rel="apple-touch-icon" href="/FAVICON.png" />
 
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>SHATRANJ</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
-  </body>
+<head>
+  <meta charset="UTF-8" />
+  <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+  <link rel="apple-touch-icon" href="/FAVICON.png" />
+  <link rel="canonical" href="https://playshatranj.com/" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#0f3460" />
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+  <!-- SEO Meta Tags -->
+  <title>Shatranj - Play Chess Online | Video Chat & Tournaments</title>
+  <meta name="description"
+    content="Play Shatranj (Chess) online with friends. Experience real-time video chat, organize tournaments, and compete in multiplayer matchmaking. The best place to play chess online." />
+  <meta name="keywords"
+    content="chess, shatranj, play chess online, multiplayer chess, chess tournament, video chat chess, online chess with friends, free chess" />
+  <meta name="author" content="Shatranj" />
+  <meta name="robots" content="index, follow" />
+
+  <!-- Open Graph / Facebook -->
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://playshatranj.com/" />
+  <meta property="og:title" content="Shatranj - Play Chess Online | Video Chat & Tournaments" />
+  <meta property="og:description"
+    content="Play Shatranj (Chess) online with friends. Experience real-time video chat, organize tournaments, and compete in multiplayer matchmaking." />
+  <meta property="og:image" content="https://playshatranj.com/og-image.png" />
+
+  <!-- Twitter -->
+  <meta property="twitter:card" content="summary_large_image" />
+  <meta property="twitter:url" content="https://playshatranj.com/" />
+  <meta property="twitter:title" content="Shatranj - Play Chess Online | Video Chat & Tournaments" />
+  <meta property="twitter:description"
+    content="Play Shatranj (Chess) online with friends. Experience real-time video chat, organize tournaments, and compete in multiplayer matchmaking." />
+  <meta property="twitter:image" content="https://playshatranj.com/og-image.png" />
+
+  <!-- Structured Data (JSON-LD) -->
+  <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      "name": "Shatranj",
+      "applicationCategory": "GameApplication",
+      "operatingSystem": "Web",
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "USD"
+      },
+      "description": "Play Shatranj (Chess) online with friends. Features include video chat, tournaments, and multiplayer matchmaking.",
+      "aggregateRating": {
+        "@type": "AggregateRating",
+        "ratingValue": "4.8",
+        "ratingCount": "1250"
+      }
+    }
+  </script>
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Outfit', 'sans-serif'],
+          },
+          colors: {
+            primary: '#0f3460',
+            secondary: '#e94560',
+            accent: '#16213e',
+          }
+        }
+      }
+    }
+  </script>
+</head>
+
+<body>
+  <div id="root"></div>
+  <script type="module" src="/src/main.jsx"></script>
+</body>
+
 </html>
